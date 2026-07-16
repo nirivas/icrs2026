@@ -1,0 +1,11 @@
+# The raw ~11 MB API snapshot lives outside this folder (../_api_cache/) so that
+# everything here stays safe to drag into the GitHub website uploader, which has
+# no .gitignore to protect it. Regenerate with:
+#   python tools/build_programme.py --fetch
+_api_cache/
+tools/_agenda_*.json
+
+__pycache__/
+*.pyc
+.DS_Store
+Thumbs.db
