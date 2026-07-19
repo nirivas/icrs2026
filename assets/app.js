@@ -21,9 +21,18 @@ var LS_CURRENT = 'icrs2026.current';
 var LS_PICKS = 'icrs2026.picks.';
 var LS_NOTES = 'icrs2026.notes.';
 var LS_HELP = 'icrs2026.helpSeen';
-var LS_LIVE_SYNC = 'icrs2026.liveSync';
+var LS_SYNC_ROOM = 'icrs2026.syncRoom';
+var LS_SYNC_AT = 'icrs2026.syncAt';
 var CROSS_DEVICE_SYNC = /orlando-code\.github\.io$/i.test(location.hostname);
-var SYNC_HASH_MAX = 7500;
+var SYNC_URL = (window.ICRS_SYNC_URL || '').replace(/\/$/, '');
+if (!SYNC_URL && CROSS_DEVICE_SYNC) {
+  SYNC_URL = 'https://icrs2026-sync.orlando-code.workers.dev';
+}
+var CLOUD_SYNC = CROSS_DEVICE_SYNC && !!SYNC_URL;
+var SYNC_WORDS = ['coral', 'reef', 'tide', 'kelp', 'shell', 'wave', 'fin', 'bay', 'manta', 'nemo'];
+var cloudPushTimer = null;
+var cloudPullTimer = null;
+var cloudBusy = false;
 var NOTE_MAX = 4000;
 var NOTE_TAGS = [
   { id: 'revisit', label: 'Revisit' },
@@ -109,7 +118,7 @@ function loadPicks(name) { return new Set(readJSON(LS_PICKS + name, [])); }
 function savePicks() {
   if (!PROFILE) return;
   writeJSON(LS_PICKS + PROFILE, Array.from(PICKS));
-  pushSyncHash();
+  scheduleCloudPush();
 }
 function loadNotes(name) {
   var raw = readJSON(LS_NOTES + name, {});
@@ -135,7 +144,7 @@ function saveNotes() {
     if (n.text || n.revisit || n.contact) out[sid] = n;
   });
   writeJSON(LS_NOTES + PROFILE, out);
-  pushSyncHash();
+  scheduleCloudPush();
 }
 function getNote(sid) {
   var n = NOTES[sid];
@@ -750,16 +759,17 @@ function downloadBackup() {
   downloadBlob('icrs2026-backup.json', JSON.stringify(buildBackup(), null, 2), 'application/json');
   toast('Backup saved (' + profs.length + ' profile' + (profs.length === 1 ? '' : 's') + ').');
 }
-function restoreBackup(data) {
+function applyBackup(data, opts) {
+  opts = opts || {};
   if (!data || data.v !== 1 || data.app !== 'icrs2026' || !Array.isArray(data.profiles)) {
-    toast('That file is not a valid ICRS backup.');
-    return;
+    if (!opts.silent) toast('That file is not a valid ICRS backup.');
+    return false;
   }
   var n = data.profiles.length;
-  if (!n) { toast('Backup has no profiles.'); return; }
-  if (!confirm('Restore picks and notes for ' + n + ' profile' + (n === 1 ? '' : 's') +
-      ' from this backup? Existing data for those names will be replaced.')) return;
-
+  if (!n) {
+    if (!opts.silent) toast('Backup has no profiles.');
+    return false;
+  }
   var list = profiles();
   data.profiles.forEach(function (name) {
     if (list.indexOf(name) === -1) list.push(name);
@@ -772,114 +782,164 @@ function restoreBackup(data) {
   else setProfile(list[0]);
   updateCount();
   render();
-  toast('Restored ' + n + ' profile' + (n === 1 ? '' : 's') + '.');
+  if (!opts.silent) {
+    toast('Restored ' + n + ' profile' + (n === 1 ? '' : 's') + '.');
+  }
+  return true;
+}
+function restoreBackup(data) {
+  if (!data || data.v !== 1 || data.app !== 'icrs2026' || !Array.isArray(data.profiles)) {
+    toast('That file is not a valid ICRS backup.');
+    return;
+  }
+  var n = data.profiles.length;
+  if (!n) { toast('Backup has no profiles.'); return; }
+  if (!confirm('Restore picks and notes for ' + n + ' profile' + (n === 1 ? '' : 's') +
+      ' from this backup? Existing data for those names will be replaced.')) return;
+  applyBackup(data);
+  scheduleCloudPush();
 }
 function pickRestoreFile() {
   el('restoreFile').click();
 }
 
-/* ---------- share & cross-device sync (orlando-code site) ---------- */
-function liveSyncOn() {
-  if (!CROSS_DEVICE_SYNC) return false;
-  try { return localStorage.getItem(LS_LIVE_SYNC) !== '0'; } catch (e) { return true; }
+/* ---------- share & cloud sync (orlando-code site) ---------- */
+function syncRoom() {
+  try { return (localStorage.getItem(LS_SYNC_ROOM) || '').toLowerCase().trim(); } catch (e) { return ''; }
 }
-function b64urlEncode(str) {
-  return btoa(unescape(encodeURIComponent(str))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+function syncAt() {
+  try { return parseInt(localStorage.getItem(LS_SYNC_AT) || '0', 10) || 0; } catch (e) { return 0; }
 }
-function b64urlDecode(str) {
-  var s = String(str).replace(/-/g, '+').replace(/_/g, '/');
-  while (s.length % 4) s += '=';
-  return decodeURIComponent(escape(atob(s)));
+function setSyncAt(at) {
+  try { localStorage.setItem(LS_SYNC_AT, String(at)); } catch (e) {}
 }
-function packNotesForUrl() {
-  var rows = [];
-  Object.keys(NOTES).forEach(function (sid) {
-    var n = NOTES[sid];
-    if (!n || (!n.text && !n.revisit && !n.contact)) return;
-    rows.push([sid, n.text || '', n.revisit ? 1 : 0, n.contact ? 1 : 0]);
+function genSyncCode() {
+  var pick = function () { return SYNC_WORDS[Math.floor(Math.random() * SYNC_WORDS.length)]; };
+  return pick() + '-' + pick() + '-' + String(Math.floor(Math.random() * 9000) + 1000);
+}
+function normalizeSyncCode(raw) {
+  return String(raw || '').toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '').slice(0, 32);
+}
+function setSyncRoom(code, opts) {
+  opts = opts || {};
+  var room = normalizeSyncCode(code);
+  if (!room) return false;
+  try { localStorage.setItem(LS_SYNC_ROOM, room); } catch (e) { return false; }
+  if (el('syncCodeInput')) el('syncCodeInput').value = room;
+  updateCloudSyncUI();
+  if (!opts.quiet) toast('Sync code set — loading from cloud…');
+  pullCloudSync(true);
+  return true;
+}
+function cloudPayload() {
+  return { at: Date.now(), data: buildBackup() };
+}
+function scheduleCloudPush() {
+  if (!CLOUD_SYNC || !syncRoom() || cloudBusy) return;
+  clearTimeout(cloudPushTimer);
+  cloudPushTimer = setTimeout(pushCloudSync, 1500);
+}
+function pushCloudSync() {
+  var room = syncRoom();
+  if (!room || !CLOUD_SYNC || cloudBusy) return;
+  var payload = cloudPayload();
+  updateCloudSyncStatus('saving');
+  fetch(SYNC_URL + '/' + encodeURIComponent(room), {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  }).then(function (r) {
+    if (r.ok) {
+      setSyncAt(payload.at);
+      updateCloudSyncStatus('synced');
+    } else updateCloudSyncStatus('error');
+  }).catch(function () { updateCloudSyncStatus('offline'); });
+}
+function pullCloudSync(force) {
+  var room = syncRoom();
+  if (!room || !CLOUD_SYNC) return Promise.resolve(false);
+  if (!force && cloudBusy) return Promise.resolve(false);
+  updateCloudSyncStatus('pulling');
+  return fetch(SYNC_URL + '/' + encodeURIComponent(room), { cache: 'no-store' })
+    .then(function (r) {
+      if (r.status === 404) {
+        if (force) scheduleCloudPush();
+        updateCloudSyncStatus('synced');
+        return false;
+      }
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.json();
+    })
+    .then(function (remote) {
+      if (!remote || !remote.at || !remote.data) return false;
+      var localAt = syncAt();
+      if (!force && remote.at <= localAt) {
+        updateCloudSyncStatus('synced');
+        return false;
+      }
+      cloudBusy = true;
+      applyBackup(remote.data, { silent: true });
+      setSyncAt(remote.at);
+      cloudBusy = false;
+      updateCloudSyncStatus('synced');
+      if (force) toast('Synced from cloud.');
+      return true;
+    })
+    .catch(function () {
+      updateCloudSyncStatus('offline');
+      return false;
+    });
+}
+function startCloudSyncLoop() {
+  if (!CLOUD_SYNC) return;
+  clearInterval(cloudPullTimer);
+  cloudPullTimer = setInterval(function () {
+    if (document.visibilityState === 'visible' && syncRoom()) pullCloudSync(false);
+  }, 25000);
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState === 'visible' && syncRoom()) pullCloudSync(false);
   });
-  return rows;
 }
-function unpackNotesFromUrl(rows) {
-  var out = {};
-  if (!Array.isArray(rows)) return out;
-  rows.forEach(function (row) {
-    if (!row || !row[0]) return;
-    var n = {
-      text: String(row[1] || '').slice(0, NOTE_MAX),
-      revisit: !!row[2],
-      contact: !!row[3]
-    };
-    if (n.text || n.revisit || n.contact) out[row[0]] = n;
-  });
-  return out;
+function updateCloudSyncStatus(state) {
+  var elStatus = el('cloudSyncStatus');
+  if (!elStatus) return;
+  var labels = {
+    synced: 'Up to date',
+    saving: 'Saving…',
+    pulling: 'Checking…',
+    offline: 'Offline',
+    error: 'Sync error'
+  };
+  elStatus.textContent = labels[state] || '';
+  elStatus.dataset.state = state || '';
 }
-function buildSyncHash() {
+function updateCloudSyncUI() {
+  var panel = el('cloudSyncPanel');
+  var note = el('mineNote');
+  if (!CROSS_DEVICE_SYNC) return;
+  if (panel) panel.hidden = false;
+  if (note) {
+    note.innerHTML = 'Picks and notes are saved in this browser and <b>synced automatically</b> when you use the same sync code on another device. Clearing site data removes them locally — your cloud copy stays until you change the code.';
+  }
+  var input = el('syncCodeInput');
+  if (input && document.activeElement !== input) input.value = syncRoom();
+  updateCloudSyncStatus(syncRoom() ? 'synced' : '');
+}
+function buildShareHash() {
   if (!PROFILE) return '';
   var parts = ['n=' + encodeURIComponent(PROFILE)];
   if (PICKS.size) parts.push('s=' + Array.from(PICKS).join(''));
-  if (CROSS_DEVICE_SYNC) {
-    var packed = packNotesForUrl();
-    if (packed.length) {
-      var enc = b64urlEncode(JSON.stringify(packed));
-      if (enc.length > SYNC_HASH_MAX) return null;
-      parts.push('o=' + enc);
-    }
-  }
   return parts.join('&');
 }
-function syncURL() {
-  if (!PROFILE) return siteURL();
-  var h = buildSyncHash();
-  if (h === null) return null;
-  return location.origin + location.pathname + (h ? '#' + h : '');
-}
-function pushSyncHash() {
-  if (!CROSS_DEVICE_SYNC || !liveSyncOn() || !PROFILE) return;
-  var h = buildSyncHash();
-  if (h === null) return;
-  var path = location.pathname + location.search + '#' + h;
-  if (location.pathname + location.search + location.hash !== path) {
-    history.replaceState(null, '', path);
-  }
-}
-function applyNotesFromPacked(packed, who) {
-  var incoming = unpackNotesFromUrl(packed);
-  var keys = Object.keys(incoming);
-  if (!keys.length) return 0;
-  if (who && who !== PROFILE) {
-    var list = profiles();
-    if (list.indexOf(who) === -1) { list.push(who); saveProfiles(list); }
-    setProfile(who);
-  }
-  keys.forEach(function (sid) {
-    if (BY_SID.has(sid)) NOTES[sid] = incoming[sid];
-  });
-  writeJSON(LS_NOTES + PROFILE, (function () {
-    var out = {};
-    Object.keys(NOTES).forEach(function (sid) {
-      var n = NOTES[sid];
-      if (n && (n.text || n.revisit || n.contact)) out[sid] = n;
-    });
-    return out;
-  })());
-  keys.forEach(function (sid) { patchNoteBadges(sid); });
-  pushSyncHash();
-  return keys.length;
-}
 function shareURL() {
-  return syncURL() || (location.origin + location.pathname);
+  if (!PROFILE) return siteURL();
+  var h = buildShareHash();
+  return location.origin + location.pathname + (h ? '#' + h : '');
 }
 function copyShare() {
   if (!PROFILE) { toast('Set up a profile first.'); return; }
-  if (!PICKS.size && !notedTalks().length) {
-    toast('Star a talk or add a note first.'); return;
-  }
-  var url = syncURL();
-  if (!url) { toast('Too much data for a link — use Backup instead.'); return; }
-  copyText(url, CROSS_DEVICE_SYNC
-    ? 'Sync link copied — open on your other device for picks and notes.'
-    : 'Share link copied — open it on your phone.');
+  if (!PICKS.size) { toast('Star a talk first.'); return; }
+  copyText(shareURL(), 'Share link copied — open on your other device for starred talks.');
 }
 function siteURL() {
   return location.origin + location.pathname;
@@ -895,6 +955,11 @@ function copyText(url, okMsg) {
 function copySiteLink() {
   copyText(siteURL(), 'Site link copied.');
 }
+function copySyncCode() {
+  var code = syncRoom();
+  if (!code) { toast('Enter or generate a sync code first.'); return; }
+  copyText(code, 'Sync code copied — paste it on your other device.');
+}
 var QR_LOAD = null;
 function loadQR() {
   if (typeof qrcode === 'function') return Promise.resolve();
@@ -909,10 +974,8 @@ function loadQR() {
   return QR_LOAD;
 }
 function renderShare() {
-  var url = syncURL() || siteURL();
-  var lead = CROSS_DEVICE_SYNC && PROFILE
-    ? 'Scan or copy this link to load your picks and notes on another device. After changes here, copy the link again on your other device.'
-    : 'Scan this code to open the ICRS 2026 planner on another phone or laptop.';
+  var url = siteURL();
+  var lead = 'Scan this code to open the ICRS 2026 planner on another phone or laptop.';
   el('content').innerHTML =
     '<div class="qr-panel">' +
       '<p class="qr-lead">' + lead + '</p>' +
@@ -920,9 +983,7 @@ function renderShare() {
       '<p class="qr-url" id="qrUrl">' + esc(url) + '</p>' +
       '<button id="btnCopySite" class="btn" type="button">Copy link</button>' +
     '</div>';
-  el('btnCopySite').addEventListener('click', function () {
-    copyText(url, CROSS_DEVICE_SYNC ? 'Sync link copied.' : 'Site link copied.');
-  });
+  el('btnCopySite').addEventListener('click', copySiteLink);
   loadQR().then(function () {
     var qr = qrcode(0, 'M');
     qr.addData(url);
@@ -945,76 +1006,38 @@ function importFromHash(opts) {
 
   var ms = h.match(/[#&]s=([0-9a-fA-F]*)/);
   var mn = h.match(/[#&]n=([^&]*)/);
-  var mo = CROSS_DEVICE_SYNC ? h.match(/[#&]o=([^&]*)/) : null;
-  var hasPicks = ms && ms[1];
-  var hasNotes = mo && mo[1];
-  if (!hasPicks && !hasNotes) return false;
+  if (!ms || !ms[1]) return false;
 
   var name = '';
   if (mn) { try { name = decodeURIComponent(mn[1]); } catch (e) { name = ''; } }
-  var who = (name || PROFILE || 'Synced').slice(0, 40);
-  var silent = CROSS_DEVICE_SYNC && (liveSyncOn() || !!hasNotes);
-
-  var noteCount = 0;
-  if (hasNotes) {
-    try { noteCount = applyNotesFromPacked(JSON.parse(b64urlDecode(mo[1])), who); }
-    catch (e) { /* ignore bad note payload */ }
-  }
-
-  var valid = [];
-  if (hasPicks) {
-    valid = (ms[1].match(/.{1,8}/g) || []).filter(function (s) { return BY_SID.has(s); });
-  }
-  if (!valid.length && !noteCount) {
-    if (hasPicks) toast('That link had no talks we recognise.');
+  var who = (name || PROFILE || 'Shared').slice(0, 40);
+  var valid = (ms[1].match(/.{1,8}/g) || []).filter(function (s) { return BY_SID.has(s); });
+  if (!valid.length) {
+    toast('That link had no talks we recognise.');
     return false;
   }
 
-  if (!silent && valid.length) {
+  if (!opts.quiet) {
     var msg = 'Import ' + valid.length + ' talk' + (valid.length === 1 ? '' : 's') +
-      ' into "' + who + '"?' + (noteCount ? ' (' + noteCount + ' notes too.)' : '') +
+      ' into "' + who + '"?' +
       (valid.length < (ms[1].match(/.{1,8}/g) || []).length
         ? '\n\n(Some entries are not in the current programme and will be skipped.)' : '');
     if (!window.confirm(msg)) return false;
   }
 
-  if (valid.length) {
-    var list = profiles();
-    if (list.indexOf(who) === -1) { list.push(who); saveProfiles(list); }
-    if (who !== PROFILE) setProfile(who);
-    PICKS = new Set(valid);
-    writeJSON(LS_PICKS + PROFILE, Array.from(PICKS));
-    updateCount();
-    pushSyncHash();
-  }
+  var list = profiles();
+  if (list.indexOf(who) === -1) { list.push(who); saveProfiles(list); }
+  if (who !== PROFILE) setProfile(who);
+  PICKS = new Set(valid);
+  writeJSON(LS_PICKS + PROFILE, Array.from(PICKS));
+  updateCount();
+  history.replaceState(null, '', location.pathname + location.search);
+  scheduleCloudPush();
 
-  if (silent) pushSyncHash();
-  else history.replaceState(null, '', location.pathname + location.search);
-
-  if (noteCount || valid.length) {
-    if (!opts.quiet) {
-      var parts = [];
-      if (valid.length) parts.push(valid.length + ' talk' + (valid.length === 1 ? '' : 's'));
-      if (noteCount) parts.push(noteCount + ' note' + (noteCount === 1 ? '' : 's'));
-      toast((silent ? 'Synced ' : 'Imported ') + parts.join(' and ') + '.');
-    }
+  if (!opts.quiet) {
+    toast('Imported ' + valid.length + ' talk' + (valid.length === 1 ? '' : 's') + '.');
   }
   return true;
-}
-function updateSyncUI() {
-  var note = document.querySelector('.mine-note');
-  var btn = el('btnShare');
-  var wrap = el('liveSyncWrap');
-  if (!CROSS_DEVICE_SYNC) return;
-  if (btn) btn.textContent = 'Copy sync link';
-  if (wrap) wrap.hidden = false;
-  if (note) {
-    note.innerHTML = 'Open the same <b>sync link</b> on each device (or scan the Share tab QR). ' +
-      'Picks and notes are encoded in the link &mdash; copy it again after you make changes. ' +
-      'Use <b>Backup</b> if your notes grow too long for a link.';
-  }
-  var chk = el('liveSyncChk');
-  if (chk) chk.checked = liveSyncOn();
 }
 
 /* ---------- profile dialog ---------- */
@@ -1048,7 +1071,7 @@ function saveProfileFromInput() {
   setProfile(name);
   el('profileDlg').close();
   render();
-  // first-timers see the guide once, right after naming themselves
+  scheduleCloudPush();
   setTimeout(maybeShowHelp, 80);
 }
 
@@ -1156,6 +1179,10 @@ function setView(v) {
   });
   el('programmeControls').hidden = v !== 'programme';
   el('mineControls').hidden = v !== 'mine';
+  if (v === 'mine' && CROSS_DEVICE_SYNC && PROFILE && !syncRoom()) {
+    setSyncRoom(genSyncCode(), { quiet: true });
+    scheduleCloudPush();
+  }
   window.scrollTo(0, 0);
   render();
 }
@@ -1264,13 +1291,22 @@ function wire() {
   el('onlyRevisit').addEventListener('change', render);
   el('onlyContact').addEventListener('change', render);
   el('btnShare').addEventListener('click', copyShare);
-  if (el('liveSyncChk')) {
-    el('liveSyncChk').addEventListener('change', function () {
-      try { localStorage.setItem(LS_LIVE_SYNC, el('liveSyncChk').checked ? '1' : '0'); } catch (e) {}
-      if (el('liveSyncChk').checked) pushSyncHash();
-      else history.replaceState(null, '', location.pathname + location.search);
+  if (el('syncCodeInput')) {
+    el('syncCodeInput').addEventListener('change', function () {
+      var code = normalizeSyncCode(el('syncCodeInput').value);
+      if (code) setSyncRoom(code);
+    });
+    el('syncCodeInput').addEventListener('keydown', function (ev) {
+      if (ev.key === 'Enter') { ev.preventDefault(); el('syncCodeInput').blur(); }
     });
   }
+  if (el('btnSyncGen')) {
+    el('btnSyncGen').addEventListener('click', function () {
+      setSyncRoom(genSyncCode());
+      scheduleCloudPush();
+    });
+  }
+  if (el('btnSyncCopy')) el('btnSyncCopy').addEventListener('click', copySyncCode);
   el('btnNotesMd').addEventListener('click', downloadNotesMd);
   el('btnBackup').addEventListener('click', downloadBackup);
   el('btnRestore').addEventListener('click', pickRestoreFile);
@@ -1331,8 +1367,9 @@ function boot() {
       else if (list.length) setProfile(list[0]);
 
       var imported = importFromHash();
-      updateSyncUI();
-      if (CROSS_DEVICE_SYNC && liveSyncOn() && PROFILE) pushSyncHash();
+      updateCloudSyncUI();
+      startCloudSyncLoop();
+      if (CLOUD_SYNC && syncRoom()) pullCloudSync(true);
       setDay(pickInitialDay());
       setView('programme');
       if (!PROFILE && !imported) openProfile(true);
@@ -1359,7 +1396,7 @@ if ('serviceWorker' in navigator && location.protocol !== 'file:') {
   });
 }
 window.addEventListener('pageshow', function () {
-  if (CROSS_DEVICE_SYNC && location.hash && DATA) importFromHash({ quiet: true });
+  if (CLOUD_SYNC && syncRoom() && DATA) pullCloudSync(false);
 });
 el('content').innerHTML = '<div class="loading">Loading the programme…</div>';
 boot();

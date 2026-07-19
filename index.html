@@ -76,10 +76,18 @@
 
 <div id="mineControls" class="wrap" hidden>
   <p class="mine-note" id="mineNote">Picks and notes are stored in this browser only. Clearing site data removes them. Share links move picks between devices, not notes — use <b>Backup</b> / <b>Restore</b> for that.</p>
-  <label class="live-sync" id="liveSyncWrap" hidden>
-    <input type="checkbox" id="liveSyncChk" checked>
-    <span>Update link in address bar when I edit</span>
-  </label>
+  <div id="cloudSyncPanel" class="cloud-sync" hidden>
+    <div class="cloud-sync-head">
+      <b>Sync across devices</b>
+      <span id="cloudSyncStatus" class="cloud-sync-status" aria-live="polite"></span>
+    </div>
+    <p class="cloud-sync-hint">Use the same code on your phone and laptop. Picks and notes update automatically — no links to copy.</p>
+    <div class="cloud-sync-row">
+      <input id="syncCodeInput" class="cloud-sync-input" type="text" placeholder="e.g. coral-reef-4821" maxlength="32" autocapitalize="off" autocorrect="off" spellcheck="false" aria-label="Sync code">
+      <button id="btnSyncGen" class="btn btn-quiet" type="button">New code</button>
+      <button id="btnSyncCopy" class="btn" type="button">Copy code</button>
+    </div>
+  </div>
   <div class="mine-bar">
     <button id="btnShare" class="btn" type="button">Copy share link</button>
     <button id="btnNotesMd" class="btn" type="button">Notes (.md)</button>
@@ -201,6 +209,7 @@
 
 <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
+<script src="assets/sync-config.js"></script>
 <script src="assets/app.js"></script>
 </body>
 </html>

@@ -207,11 +207,24 @@ mark{background:color-mix(in srgb,var(--sun) 45%,transparent);color:inherit;bord
   border-radius:var(--r);padding:8px 11px;
 }
 .mine-bar{display:flex;gap:8px;flex-wrap:wrap;padding:8px 0 10px}
-.live-sync{
-  display:flex;align-items:center;gap:8px;margin:0 0 8px;
-  font-size:12px;color:var(--ink-2);cursor:pointer;user-select:none;
+.cloud-sync{
+  margin:0 0 10px;padding:10px 12px;
+  background:color-mix(in srgb,var(--teal) 7%,var(--panel));
+  border:1px solid color-mix(in srgb,var(--teal) 22%,var(--line));
+  border-radius:var(--r);
 }
-.live-sync input{accent-color:var(--teal);width:15px;height:15px;margin:0}
+.cloud-sync-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:0 0 4px}
+.cloud-sync-head b{font-size:13px}
+.cloud-sync-status{font-size:11px;font-weight:600;color:var(--ink-3)}
+.cloud-sync-status[data-state="synced"]{color:var(--teal)}
+.cloud-sync-status[data-state="offline"],.cloud-sync-status[data-state="error"]{color:var(--coral)}
+.cloud-sync-hint{margin:0 0 8px;font-size:12px;line-height:1.45;color:var(--ink-2)}
+.cloud-sync-row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.cloud-sync-input{
+  flex:1 1 160px;min-width:0;border:1px solid var(--line);border-radius:var(--r);
+  padding:8px 10px;font:inherit;font-size:13px;background:var(--panel);color:var(--ink);
+}
+.cloud-sync-input:focus{outline:none;border-color:var(--teal);box-shadow:0 0 0 2px color-mix(in srgb,var(--teal) 18%,transparent)}
 .btn{
   border:1px solid var(--line);background:var(--panel);color:var(--ink);
   border-radius:var(--r);padding:8px 13px;font:inherit;font-size:13px;font-weight:600;cursor:pointer;
