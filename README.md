@@ -1,6 +1,6 @@
 # ICRS 2026 Planner
 
-A small web app for the **15th International Coral Reef Symposium** (NZICC, Auckland, 19–24 July 2026). Made with assistance from
+A small web app for the **15th International Coral Reef Symposium** (NZICC, Auckland, 19–24 July 2026). Thank you LLMs!
 
 It lists every talk by **day, session, and room**, and lets you star the ones you want into your own
 schedule. It's a plain static site — no server, no build step, no accounts.
