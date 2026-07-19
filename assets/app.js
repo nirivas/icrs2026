@@ -18,6 +18,7 @@ var RENDER_CAP = 600;
 var LS_PROFILES = 'icrs2026.profiles';
 var LS_CURRENT = 'icrs2026.current';
 var LS_PICKS = 'icrs2026.picks.';
+var LS_HELP = 'icrs2026.helpSeen';
 var NZ_OFFSET = 12;          // Auckland is UTC+12 (NZST) for 19-24 July 2026
 
 var $ = function (s) { return document.querySelector(s); };
@@ -591,6 +592,24 @@ function saveProfileFromInput() {
   setProfile(name);
   el('profileDlg').close();
   render();
+  // first-timers see the guide once, right after naming themselves
+  setTimeout(maybeShowHelp, 80);
+}
+
+/* ---------- how-to guide ---------- */
+function openHelp() {
+  try { localStorage.setItem(LS_HELP, '1'); } catch (e) {}
+  var dlg = el('helpDlg');
+  if (!dlg.open) dlg.showModal();
+}
+function closeHelp() {
+  var dlg = el('helpDlg');
+  if (dlg.open) dlg.close();
+}
+function maybeShowHelp() {
+  var seen;
+  try { seen = localStorage.getItem(LS_HELP); } catch (e) {}
+  if (!seen && !el('helpDlg').open && !el('profileDlg').open) openHelp();
 }
 
 function renderProfileList() {
@@ -720,6 +739,14 @@ function wire() {
     var row = e.target.closest && e.target.closest('[data-talk]');
     if (row && !e.target.closest('.star')) { e.preventDefault(); openTalk(row.dataset.talk); }
   });
+  // how-to guide
+  el('helpBtn').addEventListener('click', openHelp);
+  el('helpClose').addEventListener('click', closeHelp);
+  el('helpDone').addEventListener('click', closeHelp);
+  el('helpDlg').addEventListener('click', function (ev) {
+    if (ev.target === el('helpDlg')) closeHelp();
+  });
+
   el('talkClose').addEventListener('click', closeTalk);
   el('talkDlg').addEventListener('close', function () { OPEN_SID = null; });
   el('talkDlg').addEventListener('cancel', function () { OPEN_SID = null; });
@@ -812,6 +839,9 @@ function boot() {
       setDay(pickInitialDay());
       setView('programme');
       if (!PROFILE && !imported) openProfile(true);
+      // if a profile already exists (returning user, or opened via a share link),
+      // show the guide once. New users get it after entering their name instead.
+      else maybeShowHelp();
 
       // Warm the abstracts once the programme is on screen, so opening a talk is
       // instant and everything is cached for offline use at the venue.

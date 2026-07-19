@@ -24,10 +24,15 @@
         <small>Auckland &middot; 19&ndash;24 July</small>
       </span>
     </div>
-    <button id="profileBtn" class="profile-chip" type="button" aria-haspopup="dialog">
-      <span class="avatar" id="profileInitials">?</span>
-      <span id="profileName">Guest</span>
-    </button>
+    <div class="topbar-actions">
+      <button id="helpBtn" class="round-btn" type="button" aria-haspopup="dialog" aria-label="How to use this app" title="How to use">
+        <svg viewBox="0 0 24 24" width="19" height="19" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" d="M9.2 9a2.8 2.8 0 1 1 4.4 2.3c-1 .7-1.6 1.2-1.6 2.4"/><circle cx="12" cy="17.4" r="1.3" fill="currentColor"/></svg>
+      </button>
+      <button id="profileBtn" class="profile-chip" type="button" aria-haspopup="dialog">
+        <span class="avatar" id="profileInitials">?</span>
+        <span id="profileName">Guest</span>
+      </button>
+    </div>
   </div>
 </header>
 
@@ -72,6 +77,65 @@
   </p>
   <p class="foot-note">Your picks are saved in this browser only &mdash; they never leave your device.</p>
 </footer>
+
+<!-- how to use -->
+<dialog id="helpDlg" class="dlg dlg-talk" aria-labelledby="helpTitle">
+  <div class="talk-dlg">
+    <header class="talk-dlg-head help-head">
+      <div class="talk-dlg-head-in">
+        <h2 id="helpTitle">How to use this planner</h2>
+        <div class="help-sub">Build your own ICRS 2026 schedule in a few taps 🐠</div>
+      </div>
+      <button id="helpClose" class="icon-btn" type="button" aria-label="Close">&times;</button>
+    </header>
+    <div class="talk-dlg-body help-body">
+
+      <ol class="help-steps">
+        <li>
+          <span class="step-n">1</span>
+          <div>
+            <b>Find talks.</b> Use the day tabs to browse, or the search box to look up a title,
+            author, or topic. Filters let you narrow by room, theme, or day.
+          </div>
+        </li>
+        <li>
+          <span class="step-n">2</span>
+          <div>
+            <b>Star what you want.</b> Tap the ☆ next to any talk to add it to your schedule — the
+            star fills in and the count in <b>My schedule</b> goes up. Tap again to remove it.
+          </div>
+        </li>
+        <li>
+          <span class="step-n">3</span>
+          <div>
+            <b>Tap a talk for details.</b> Opening a talk shows its full <b>abstract</b>, room number,
+            session, presenter, and co-authors — and you can star it from there too.
+          </div>
+        </li>
+        <li>
+          <span class="step-n">4</span>
+          <div>
+            <b>Check My schedule.</b> Your picks appear in time order for each day. If two overlap,
+            you'll see a <span class="warn">⚠ clash</span> badge — you can't be in both rooms at once.
+          </div>
+        </li>
+      </ol>
+
+      <h3 class="help-h">Handy extras</h3>
+      <ul class="help-tips">
+        <li><span class="ti">📅</span><div><b>Add to your calendar.</b> In My schedule, <b>Add to calendar (.ics)</b> downloads your talks with times and rooms for your phone or laptop calendar.</div></li>
+        <li><span class="ti">🔗</span><div><b>Use it on another device.</b> Tap <b>Copy share link</b> and open that link on your phone — your picks come with it. Great for planning on a laptop, then using your phone at the venue.</div></li>
+        <li><span class="ti">📲</span><div><b>Works offline.</b> Add the page to your home screen (your browser's <i>Add to Home Screen</i>) and it keeps working with no wifi — handy in the session rooms.</div></li>
+        <li><span class="ti">👤</span><div><b>It's yours.</b> Your name in the top corner labels your schedule. Picks are saved on this device only and never leave it — updating the app won't erase them. Tap your name to switch or add a profile.</div></li>
+      </ul>
+
+      <p class="help-note">Times are Auckland local (NZST). The programme can change — the date it was captured is shown at the bottom of the page.</p>
+    </div>
+    <footer class="talk-dlg-foot">
+      <button id="helpDone" class="btn btn-primary" type="button">Got it — let's plan 🪸</button>
+    </footer>
+  </div>
+</dialog>
 
 <!-- talk detail: abstract, room, session -->
 <dialog id="talkDlg" class="dlg dlg-talk" aria-labelledby="talkTitle">
