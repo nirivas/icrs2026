@@ -10,6 +10,7 @@ var ABSTRACTS = null;        // sid -> text; lazily fetched (~3.9 MB)
 var ABSTRACTS_STATE = 'idle'; // idle | loading | ready | failed
 var OPEN_SID = null;         // talk currently shown in the detail dialog
 var PICKS = new Set();
+var NOTES = {};              // sid -> { text, revisit, contact }
 var PROFILE = '';
 var VIEW = 'programme';
 var DAY = null;
@@ -18,9 +19,13 @@ var RENDER_CAP = 600;
 var LS_PROFILES = 'icrs2026.profiles';
 var LS_CURRENT = 'icrs2026.current';
 var LS_PICKS = 'icrs2026.picks.';
+var LS_NOTES = 'icrs2026.notes.';
 var LS_HELP = 'icrs2026.helpSeen';
-var NZ_OFFSET = 12;          // Auckland is UTC+12 (NZST) for 19-24 July 2026
-
+var NOTE_MAX = 4000;
+var NOTE_TAGS = [
+  { id: 'revisit', label: 'Revisit' },
+  { id: 'contact', label: 'Contact' }
+];
 var $ = function (s) { return document.querySelector(s); };
 var el = function (s) { return document.getElementById(s); };
 
@@ -102,10 +107,133 @@ function savePicks() {
   if (!PROFILE) return;
   writeJSON(LS_PICKS + PROFILE, Array.from(PICKS));
 }
+function loadNotes(name) {
+  var raw = readJSON(LS_NOTES + name, {});
+  var out = {};
+  Object.keys(raw).forEach(function (sid) {
+    var n = raw[sid];
+    if (!n || typeof n !== 'object') return;
+    out[sid] = {
+      text: String(n.text || '').slice(0, NOTE_MAX),
+      revisit: !!n.revisit,
+      contact: !!n.contact
+    };
+    if (!out[sid].text && !out[sid].revisit && !out[sid].contact) delete out[sid];
+  });
+  return out;
+}
+function saveNotes() {
+  if (!PROFILE) return;
+  var out = {};
+  Object.keys(NOTES).forEach(function (sid) {
+    var n = NOTES[sid];
+    if (!n) return;
+    if (n.text || n.revisit || n.contact) out[sid] = n;
+  });
+  writeJSON(LS_NOTES + PROFILE, out);
+}
+function getNote(sid) {
+  var n = NOTES[sid];
+  if (!n) return { text: '', revisit: false, contact: false };
+  return { text: n.text || '', revisit: !!n.revisit, contact: !!n.contact };
+}
+function hasNote(sid) {
+  var n = getNote(sid);
+  return !!(n.text || n.revisit || n.contact);
+}
+function noteFiltersActive() {
+  return el('onlyNotes').checked || el('onlyRevisit').checked || el('onlyContact').checked;
+}
+function matchesNoteFilters(sid, f) {
+  if (!f.notes && !f.revisit && !f.contact) return true;
+  var n = getNote(sid);
+  if (f.notes && n.text) return true;
+  if (f.revisit && n.revisit) return true;
+  if (f.contact && n.contact) return true;
+  return false;
+}
+function noteFilterEmptyHTML(f) {
+  var nf = { notes: f.notes, revisit: f.revisit, contact: f.contact };
+  var global = 0;
+  TALKS.forEach(function (r) {
+    if (matchesNoteFilters(r.talk.sid, nf)) global++;
+  });
+
+  if (global === 0) {
+    if (f.revisit && f.contact) {
+      return '<div class="empty"><h3>No tagged talks yet</h3>' +
+        '<p>Open a talk and tap <b>Revisit</b> or <b>Contact</b>, or turn off the filters.</p></div>';
+    }
+    if (f.revisit) {
+      return '<div class="empty"><h3>No talks to revisit</h3>' +
+        '<p>Open a talk and tap <b>Revisit</b>, or turn off this filter.</p></div>';
+    }
+    if (f.contact) {
+      return '<div class="empty"><h3>No contacts yet</h3>' +
+        '<p>Open a talk and tap <b>Contact</b>, or turn off this filter.</p></div>';
+    }
+    if (f.notes) {
+      return '<div class="empty"><h3>No notes yet</h3>' +
+        '<p>Open a talk and write a note, or turn off <b>Notes</b>.</p></div>';
+    }
+  }
+
+  if (f.revisit && f.contact) {
+    return '<div class="empty"><h3>No tagged talks here</h3>' +
+      '<p>None of your <b>Revisit</b> or <b>Contact</b> talks match this day or filter.</p></div>';
+  }
+  if (f.revisit) {
+    return '<div class="empty"><h3>No revisits here</h3>' +
+      '<p>None of your <b>Revisit</b> talks match this day or filter.</p></div>';
+  }
+  if (f.contact) {
+    return '<div class="empty"><h3>No contacts here</h3>' +
+      '<p>None of your <b>Contact</b> talks match this day or filter.</p></div>';
+  }
+  if (f.notes) {
+    return '<div class="empty"><h3>No notes here</h3>' +
+      '<p>None of your noted talks match this day or filter.</p></div>';
+  }
+  return '<div class="empty"><h3>No talks match</h3><p>Try a different day or filter.</p></div>';
+}
+function programmeEmptyHTML(f) {
+  if (f.mine && PICKS.size === 0) {
+    return '<div class="empty"><h3>No talks picked yet</h3>' +
+      '<p>Open <b>Programme</b> and tap the star next to any talk to build your schedule.</p></div>';
+  }
+  if (f.notes || f.revisit || f.contact) return noteFilterEmptyHTML(f);
+  if (f.mine) {
+    return '<div class="empty"><h3>No picks match</h3>' +
+      '<p>None of your picks match this day or filter. Try another day or turn off <b>My picks</b>.</p></div>';
+  }
+  return '<div class="empty"><h3>No talks match</h3><p>Try a different day, room, or search term.</p></div>';
+}
+function noteBadgesHTML(sid) {
+  var n = getNote(sid);
+  var bits = [];
+  if (n.revisit) bits.push('<span class="note-tag revisit">revisit</span>');
+  if (n.contact) bits.push('<span class="note-tag contact">contact</span>');
+  if (n.text) bits.push('<span class="note-tag has-note" title="Has personal notes">note</span>');
+  return bits.length ? '<div class="note-badges">' + bits.join('') + '</div>' : '';
+}
+function patchNoteBadges(sid) {
+  var html = noteBadgesHTML(sid);
+  Array.prototype.forEach.call(document.querySelectorAll('[data-talk="' + sid + '"]'), function (row) {
+    var box = row.querySelector('.note-badges');
+    if (html) {
+      if (box) box.outerHTML = html;
+      else {
+        var host = row.querySelector('.t-body') || row.querySelector('.m-body');
+        if (host) host.insertAdjacentHTML('beforeend', html);
+      }
+    } else if (box) box.remove();
+  });
+}
 function setProfile(name) {
   PROFILE = name;
   try { localStorage.setItem(LS_CURRENT, name); } catch (e) {}
   PICKS = loadPicks(name);
+  NOTES = loadNotes(name);
   el('profileName').textContent = name;
   el('profileInitials').textContent = initials(name);
   updateCount();
@@ -138,7 +266,10 @@ function currentFilters() {
     q: el('q').value.trim().toLowerCase(),
     room: el('fRoom').value,
     theme: el('fTheme').value,
-    mine: el('onlyMine').checked
+    mine: el('onlyMine').checked,
+    notes: el('onlyNotes').checked,
+    revisit: el('onlyRevisit').checked,
+    contact: el('onlyContact').checked
   };
 }
 function matches(rec, f) {
@@ -146,9 +277,12 @@ function matches(rec, f) {
   if (f.room && s.room !== f.room) return false;
   if (f.theme && String(s.theme) !== f.theme) return false;
   if (f.mine && !PICKS.has(t.sid)) return false;
+  if (!matchesNoteFilters(t.sid, f)) return false;
   if (f.q) {
+    var note = getNote(t.sid);
     var hay = (t.title + ' ' + t.presenter + ' ' + (t.affiliation || '') + ' ' +
-               (t.authors || []).join(' ') + ' ' + s.title + ' ' + (s.code || '')).toLowerCase();
+               (t.authors || []).join(' ') + ' ' + s.title + ' ' + (s.code || '') +
+               ' ' + note.text).toLowerCase();
     if (hay.indexOf(f.q) === -1) return false;
   }
   return true;
@@ -171,13 +305,13 @@ function renderProgramme() {
 
   // Venue-wide items (registration, teas, lunches, socials) are context, not
   // choices, so they only show when the user is not narrowing the list down.
-  var plain = !f.q && !f.room && !f.theme && !f.mine;
+  var plain = !f.q && !f.room && !f.theme && !f.mine && !f.notes && !f.revisit && !f.contact;
   var evts = plain ? DATA.events.filter(function (e) {
     return DAY === 'all' || e.date === DAY;
   }) : [];
 
-  if (!recs.length && !evts.length) {
-    el('content').innerHTML = '<div class="empty"><h3>No talks match</h3><p>Try a different day, room, or search term.</p></div>';
+  if (!recs.length && (f.mine || f.notes || f.revisit || f.contact || !evts.length)) {
+    el('content').innerHTML = programmeEmptyHTML(f);
     return;
   }
 
@@ -275,7 +409,7 @@ function cardHTML(g, f) {
       '<div class="t-body"><div class="t-title">' + hi(t.title, f.q) + '</div>' +
       '<div class="t-who">' + hi((t.honorific ? t.honorific + ' ' : '') + t.presenter, f.q) +
       (t.affiliation ? ' <span class="aff">&middot; ' + hi(t.affiliation, f.q) + '</span>' : '') +
-      '</div></div>' +
+      '</div>' + noteBadgesHTML(t.sid) + '</div>' +
       '<button class="star" data-sid="' + t.sid + '" aria-pressed="' + on + '" ' +
       'aria-label="' + (on ? 'Remove from' : 'Add to') + ' my schedule" title="' + (on ? 'Remove from' : 'Add to') + ' my schedule">' +
       starSVG(on) + '</button></div>');
@@ -301,6 +435,32 @@ function myPicks() {
            mins(a.talk.start) - mins(b.talk.start);
   });
   return out;
+}
+function notedTalks() {
+  var out = [];
+  Object.keys(NOTES).forEach(function (sid) {
+    if (!hasNote(sid)) return;
+    var r = BY_SID.get(sid);
+    if (r) out.push(r);
+  });
+  out.sort(function (a, b) {
+    return (a.session.date).localeCompare(b.session.date) ||
+           mins(a.talk.start) - mins(b.talk.start);
+  });
+  return out;
+}
+function profileSlug() {
+  return (PROFILE.toLowerCase().replace(/[^a-z0-9]+/g, '-') || 'profile');
+}
+function downloadBlob(filename, content, type) {
+  var blob = new Blob([content], { type: type });
+  var a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(function () { URL.revokeObjectURL(a.href); }, 4000);
 }
 
 /* Two picks clash when they overlap in time on the same day. With 14 rooms in
@@ -358,6 +518,7 @@ function renderMine() {
       ' &middot; ' + esc((r.talk.honorific ? r.talk.honorific + ' ' : '') + r.talk.presenter) + '</div>' +
       (c ? '<div class="clash-tag">⚠ Overlaps ' + esc(c[0].talk.title.slice(0, 40)) +
            (c.length > 1 ? ' +' + (c.length - 1) + ' more' : '') + '</div>' : '') +
+      noteBadgesHTML(r.talk.sid) +
       '</div>' +
       '<button class="star" data-sid="' + r.talk.sid + '" aria-pressed="true" aria-label="Remove from my schedule">' +
       starSVG(true) + '</button></div>');
@@ -413,6 +574,18 @@ function openTalk(sid) {
     body.push('<div class="dl"><dt>Authors</dt><dd class="muted">' +
       esc(t.authors.join(', ')) + '</dd></div>');
   }
+  body.push('<div class="my-notes" id="noteWrap">' +
+    '<h3>My notes</h3>' +
+    '<div class="note-tags" role="group" aria-label="Note tags">' +
+    NOTE_TAGS.map(function (t) {
+      return '<button type="button" class="note-tag-btn" data-tag="' + t.id + '" aria-pressed="false">' +
+        esc(t.label) + '</button>';
+    }).join('') +
+    '</div>' +
+    '<textarea id="noteText" rows="4" maxlength="' + NOTE_MAX + '" ' +
+    'placeholder="Your thoughts on this talk..."></textarea>' +
+    '<p class="note-hint"><b>Notes stay on this device.</b> They are lost if you clear browser data and are not sent via share links. Use <b>Notes (.md)</b> or <b>Backup</b> in My schedule to keep a copy.</p>' +
+    '</div>');
   body.push('<div id="absWrap" class="abstract"><h3>Abstract</h3><div id="absText"></div></div>');
   el('talkBody').innerHTML = body.join('');
 
@@ -420,6 +593,7 @@ function openTalk(sid) {
   if (!dlg.open) dlg.showModal();       // open before filling: fillAbstract checks .open
   syncTalkStar();
   fillAbstract(sid);
+  fillNoteFields(sid);
   if (ABSTRACTS_STATE === 'idle') loadAbstracts();
   el('talkBody').scrollTop = 0;
 }
@@ -428,9 +602,62 @@ function openTalk(sid) {
    some engines (including Electron shells) never fire them, which would leave
    OPEN_SID pointing at a talk that is no longer on screen. */
 function closeTalk() {
+  saveOpenNote();
   OPEN_SID = null;
   var dlg = el('talkDlg');
   if (dlg.open) dlg.close();
+}
+
+function fillNoteFields(sid) {
+  var ta = el('noteText');
+  if (!ta) return;
+  var n = getNote(sid);
+  ta.value = n.text;
+  Array.prototype.forEach.call(document.querySelectorAll('.note-tag-btn'), function (btn) {
+    var on = !!n[btn.dataset.tag];
+    btn.classList.toggle('is-on', on);
+    btn.setAttribute('aria-pressed', String(on));
+  });
+}
+
+function readNoteFromDialog() {
+  var ta = el('noteText');
+  if (!ta) return { text: '', revisit: false, contact: false };
+  var n = { text: ta.value.trim().slice(0, NOTE_MAX), revisit: false, contact: false };
+  Array.prototype.forEach.call(document.querySelectorAll('.note-tag-btn.is-on'), function (btn) {
+    n[btn.dataset.tag] = true;
+  });
+  return n;
+}
+
+function noteFilterMatchChanged(sid, had) {
+  return noteFiltersActive() && had !== matchesNoteFilters(sid, currentFilters());
+}
+function saveOpenNote() {
+  if (!OPEN_SID) return;
+  var sid = OPEN_SID;
+  var had = matchesNoteFilters(sid, currentFilters());
+  var n = readNoteFromDialog();
+  if (n.text || n.revisit || n.contact) NOTES[sid] = n;
+  else delete NOTES[sid];
+  saveNotes();
+  patchNoteBadges(sid);
+  if (noteFilterMatchChanged(sid, had)) render();
+}
+
+function toggleNoteTag(btn) {
+  if (!OPEN_SID) return;
+  var tag = btn.dataset.tag;
+  var had = matchesNoteFilters(OPEN_SID, currentFilters());
+  var n = readNoteFromDialog();
+  n[tag] = !n[tag];
+  if (n.text || n.revisit || n.contact) NOTES[OPEN_SID] = n;
+  else delete NOTES[OPEN_SID];
+  saveNotes();
+  btn.classList.toggle('is-on', n[tag]);
+  btn.setAttribute('aria-pressed', String(n[tag]));
+  patchNoteBadges(OPEN_SID);
+  if (noteFilterMatchChanged(OPEN_SID, had)) render();
 }
 
 function fillAbstract(sid) {
@@ -460,62 +687,90 @@ function syncTalkStar() {
   b.innerHTML = starSVG(on) + '<span>' + (on ? 'In my schedule' : 'Add to my schedule') + '</span>';
 }
 
-/* ---------- calendar ---------- */
-function icsTime(date, t) {
-  var dp = date.split('-').map(Number), tp = t.split(':').map(Number);
-  var ms = Date.UTC(dp[0], dp[1] - 1, dp[2], tp[0] - NZ_OFFSET, tp[1]);
-  var d = new Date(ms);
-  var p = function (n) { return String(n).padStart(2, '0'); };
-  return d.getUTCFullYear() + p(d.getUTCMonth() + 1) + p(d.getUTCDate()) + 'T' +
-         p(d.getUTCHours()) + p(d.getUTCMinutes()) + '00Z';
-}
-function icsEsc(s) {
-  return String(s == null ? '' : s).replace(/\\/g, '\\\\').replace(/;/g, '\\;')
-    .replace(/,/g, '\\,').replace(/\r?\n/g, '\\n');
-}
-function fold(line) {
-  var out = [], s = line;
-  while (s.length > 73) { out.push(s.slice(0, 73)); s = ' ' + s.slice(73); }
-  out.push(s);
-  return out.join('\r\n');
-}
-function buildICS() {
-  var list = myPicks();
-  if (!list.length) { toast('Pick some talks first.'); return null; }
-  var stamp = icsTime('2026-07-15', '12:00');
-  var L = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//ICRS 2026 Planner//EN',
-           'CALSCALE:GREGORIAN', 'METHOD:PUBLISH',
-           'X-WR-CALNAME:' + icsEsc('ICRS 2026 — ' + PROFILE)];
+/* ---------- export & backup ---------- */
+function buildNotesMarkdown() {
+  var list = notedTalks();
+  if (!list.length) return null;
+  var lines = [
+    '# ICRS 2026 notes — ' + PROFILE,
+    '',
+    'Exported ' + new Date().toISOString().slice(0, 10) + '.',
+    ''
+  ];
   list.forEach(function (r) {
-    var loc = roomLabel(r.session.room) + (roomLevel(r.session.room) ? ', ' + roomLevel(r.session.room) : '') +
-              ', NZICC Auckland';
-    var desc = (r.talk.honorific ? r.talk.honorific + ' ' : '') + r.talk.presenter +
-      (r.talk.affiliation ? ' (' + r.talk.affiliation + ')' : '') +
-      (r.session.code ? '\nSession ' + r.session.code + ' — ' + r.session.title : '') +
-      ((r.talk.authors && r.talk.authors.length > 1) ? '\nAuthors: ' + r.talk.authors.join(', ') : '');
-    L.push('BEGIN:VEVENT');
-    L.push('UID:' + r.talk.id + '@icrs2026-planner');
-    L.push('DTSTAMP:' + stamp);
-    L.push('DTSTART:' + icsTime(r.session.date, r.talk.start));
-    L.push('DTEND:' + icsTime(r.session.date, r.talk.end));
-    L.push(fold('SUMMARY:' + icsEsc(r.talk.title)));
-    L.push(fold('LOCATION:' + icsEsc(loc)));
-    L.push(fold('DESCRIPTION:' + icsEsc(desc)));
-    L.push('END:VEVENT');
+    var t = r.talk, s = r.session, note = getNote(t.sid);
+    var tags = [];
+    if (note.revisit) tags.push('revisit');
+    if (note.contact) tags.push('contact');
+    lines.push('## ' + dayLabelOf(s.date) + ' · ' + hhmm(t.start) + '–' + hhmm(t.end) +
+      ' · ' + roomLabel(s.room));
+    lines.push('');
+    lines.push('**' + t.title + '**');
+    lines.push('');
+    lines.push((t.honorific ? t.honorific + ' ' : '') + t.presenter +
+      (s.code ? ' · ' + s.code : ''));
+    if (tags.length) lines.push('', 'Tags: ' + tags.join(', '));
+    if (note.text) lines.push('', note.text);
+    lines.push('', '---', '');
   });
-  L.push('END:VCALENDAR');
-  return L.join('\r\n');
+  return lines.join('\n');
 }
-function downloadICS() {
-  var txt = buildICS();
-  if (!txt) return;
-  var blob = new Blob([txt], { type: 'text/calendar;charset=utf-8' });
-  var a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = 'icrs2026-' + (PROFILE.toLowerCase().replace(/[^a-z0-9]+/g, '-') || 'schedule') + '.ics';
-  document.body.appendChild(a); a.click(); a.remove();
-  setTimeout(function () { URL.revokeObjectURL(a.href); }, 4000);
-  toast('Calendar file downloaded (' + PICKS.size + ' talks).');
+function downloadNotesMd() {
+  var txt = buildNotesMarkdown();
+  if (!txt) { toast('No notes to export yet.'); return; }
+  downloadBlob('icrs2026-' + profileSlug() + '-notes.md', txt, 'text/markdown;charset=utf-8');
+  toast('Notes exported (' + notedTalks().length + ' talks).');
+}
+
+function buildBackup() {
+  var profs = profiles();
+  var picks = {}, notes = {};
+  profs.forEach(function (n) {
+    picks[n] = readJSON(LS_PICKS + n, []);
+    notes[n] = readJSON(LS_NOTES + n, {});
+  });
+  return {
+    v: 1,
+    app: 'icrs2026',
+    exported: new Date().toISOString().slice(0, 10),
+    current: PROFILE,
+    profiles: profs,
+    picks: picks,
+    notes: notes
+  };
+}
+function downloadBackup() {
+  var profs = profiles();
+  if (!profs.length) { toast('Create a profile first.'); return; }
+  downloadBlob('icrs2026-backup.json', JSON.stringify(buildBackup(), null, 2), 'application/json');
+  toast('Backup saved (' + profs.length + ' profile' + (profs.length === 1 ? '' : 's') + ').');
+}
+function restoreBackup(data) {
+  if (!data || data.v !== 1 || data.app !== 'icrs2026' || !Array.isArray(data.profiles)) {
+    toast('That file is not a valid ICRS backup.');
+    return;
+  }
+  var n = data.profiles.length;
+  if (!n) { toast('Backup has no profiles.'); return; }
+  if (!confirm('Restore picks and notes for ' + n + ' profile' + (n === 1 ? '' : 's') +
+      ' from this backup? Existing data for those names will be replaced.')) return;
+
+  var list = profiles();
+  data.profiles.forEach(function (name) {
+    if (list.indexOf(name) === -1) list.push(name);
+    writeJSON(LS_PICKS + name, data.picks[name] || []);
+    writeJSON(LS_NOTES + name, data.notes[name] || {});
+  });
+  saveProfiles(list);
+  if (data.current && list.indexOf(data.current) !== -1) setProfile(data.current);
+  else if (PROFILE && list.indexOf(PROFILE) !== -1) setProfile(PROFILE);
+  else setProfile(list[0]);
+  updateCount();
+  render();
+  toast('Restored ' + n + ' profile' + (n === 1 ? '' : 's') + '.');
+}
+function pickRestoreFile() {
+  el('restoreFile').click();
 }
 
 /* ---------- share ---------- */
@@ -630,7 +885,9 @@ function saveProfileFromInput() {
     else list = list.filter(function (x) { return x !== old; });
     saveProfiles(list);
     writeJSON(LS_PICKS + name, Array.from(PICKS));
+    writeJSON(LS_NOTES + name, NOTES);
     try { localStorage.removeItem(LS_PICKS + old); } catch (e) {}
+    try { localStorage.removeItem(LS_NOTES + old); } catch (e) {}
   } else if (list.indexOf(name) === -1) {
     list.push(name);
     saveProfiles(list);
@@ -769,6 +1026,7 @@ function wire() {
         var list = profiles().filter(function (x) { return x !== n; });
         saveProfiles(list);
         try { localStorage.removeItem(LS_PICKS + n); } catch (err) {}
+        try { localStorage.removeItem(LS_NOTES + n); } catch (err) {}
         if (n === PROFILE) {
           if (list.length) setProfile(list[0]);
           else { PROFILE = ''; PICKS = new Set(); el('profileDlg').close(); openProfile(true); return; }
@@ -797,11 +1055,24 @@ function wire() {
 
   el('talkClose').addEventListener('click', closeTalk);
   el('talkDlg').addEventListener('close', function () { OPEN_SID = null; });
-  el('talkDlg').addEventListener('cancel', function () { OPEN_SID = null; });
+  el('talkDlg').addEventListener('cancel', function () { saveOpenNote(); OPEN_SID = null; });
   // click the backdrop to dismiss
   el('talkDlg').addEventListener('click', function (ev) {
     if (ev.target === el('talkDlg')) closeTalk();
   });
+  el('talkBody').addEventListener('click', function (ev) {
+    var tagBtn = ev.target.closest('.note-tag-btn');
+    if (tagBtn) { ev.preventDefault(); toggleNoteTag(tagBtn); }
+  });
+  var noteTimer;
+  el('talkBody').addEventListener('input', function (ev) {
+    if (ev.target.id !== 'noteText') return;
+    clearTimeout(noteTimer);
+    noteTimer = setTimeout(saveOpenNote, 400);
+  });
+  el('talkBody').addEventListener('blur', function (ev) {
+    if (ev.target.id === 'noteText') saveOpenNote();
+  }, true);
   el('talkStar').addEventListener('click', function () {
     if (!OPEN_SID) return;
     toggle(OPEN_SID);
@@ -836,8 +1107,24 @@ function wire() {
   el('fRoom').addEventListener('change', render);
   el('fTheme').addEventListener('change', render);
   el('onlyMine').addEventListener('change', render);
-  el('btnIcs').addEventListener('click', downloadICS);
+  el('onlyNotes').addEventListener('change', render);
+  el('onlyRevisit').addEventListener('change', render);
+  el('onlyContact').addEventListener('change', render);
   el('btnShare').addEventListener('click', copyShare);
+  el('btnNotesMd').addEventListener('click', downloadNotesMd);
+  el('btnBackup').addEventListener('click', downloadBackup);
+  el('btnRestore').addEventListener('click', pickRestoreFile);
+  el('restoreFile').addEventListener('change', function () {
+    var file = el('restoreFile').files[0];
+    el('restoreFile').value = '';
+    if (!file) return;
+    var reader = new FileReader();
+    reader.onload = function () {
+      try { restoreBackup(JSON.parse(reader.result)); }
+      catch (e) { toast('Could not read that backup file.'); }
+    };
+    reader.readAsText(file);
+  });
   el('btnClear').addEventListener('click', function () {
     if (!PICKS.size) { toast('Nothing to clear.'); return; }
     if (confirm('Remove all ' + PICKS.size + ' picks from "' + PROFILE + '"?')) {
