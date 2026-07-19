@@ -117,6 +117,23 @@ select{
 .filter-check input{
   accent-color:var(--teal);width:15px;height:15px;margin:0;flex:none;
 }
+.prog-layout{
+  display:flex;gap:0;margin-top:8px;width:100%;
+  border:1px solid var(--line);border-radius:var(--r);overflow:hidden;background:var(--bg);
+}
+.prog-layout-btn{
+  flex:1;border:0;background:transparent;padding:8px 10px;
+  font:inherit;font-size:12px;font-weight:600;color:var(--ink-2);cursor:pointer;
+}
+.prog-layout-btn.is-on{background:var(--teal);color:#fff}
+.prog-layout-btn + .prog-layout-btn{border-left:1px solid var(--line)}
+.prog-layout-btn.is-on + .prog-layout-btn{border-left-color:color-mix(in srgb,var(--teal) 70%,var(--line))}
+.time-list{display:flex;flex-direction:column;gap:6px}
+.time-list .talk{border:1px solid var(--line);border-radius:var(--r);background:var(--panel)}
+.time-list .talk:first-child{border-top:1px solid var(--line)}
+.time-slot-head{margin:12px 0 2px;font-size:12px;font-weight:700;color:var(--teal)}
+.time-slot-head:first-child{margin-top:0}
+.t-meta{font-size:11px;color:var(--ink-3);margin-top:3px;line-height:1.35}
 @media(min-width:560px){
   .filter-check{flex:1 1 0;max-width:none}
 }

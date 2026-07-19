@@ -23,6 +23,7 @@ var LS_NOTES = 'icrs2026.notes.';
 var LS_HELP = 'icrs2026.helpSeen';
 var LS_SYNC_ROOM = 'icrs2026.syncRoom';
 var LS_SYNC_AT = 'icrs2026.syncAt';
+var LS_PROG_LAYOUT = 'icrs2026.progLayout';
 var CROSS_DEVICE_SYNC = /orlando-code\.github\.io$/i.test(location.hostname);
 var SYNC_URL = (window.ICRS_SYNC_URL || '').replace(/\/$/, '');
 var CLOUD_SYNC = CROSS_DEVICE_SYNC && !!SYNC_URL;
@@ -311,19 +312,60 @@ function hi(text, q) {
 }
 
 /* ---------- render: programme ---------- */
-function renderProgramme() {
-  var f = currentFilters();
-  var recs = TALKS.filter(function (r) {
+function programmeRecs(f) {
+  return TALKS.filter(function (r) {
     if (DAY !== 'all' && r.session.date !== DAY) return false;
     return matches(r, f);
   });
-
-  // Venue-wide items (registration, teas, lunches, socials) are context, not
-  // choices, so they only show when the user is not narrowing the list down.
+}
+function programmeEvents(f) {
   var plain = !f.q && !f.room && !f.theme && !f.mine && !f.notes && !f.revisit && !f.contact;
-  var evts = plain ? DATA.events.filter(function (e) {
+  if (!plain) return [];
+  return DATA.events.filter(function (e) {
     return DAY === 'all' || e.date === DAY;
-  }) : [];
+  });
+}
+function programmeLayout() {
+  try { return localStorage.getItem(LS_PROG_LAYOUT) === 'time' ? 'time' : 'session'; } catch (e) { return 'session'; }
+}
+function setProgrammeLayout(layout) {
+  try { localStorage.setItem(LS_PROG_LAYOUT, layout === 'time' ? 'time' : 'session'); } catch (e) {}
+  updateProgLayoutUI();
+  render();
+}
+function talkMetaHTML(s) {
+  var bits = [];
+  if (s.room) {
+    bits.push(roomLabel(s.room) + (roomLevel(s.room) ? ' (' + roomLevel(s.room) + ')' : ''));
+  }
+  if (s.code) bits.push(s.code);
+  if (s.theme) bits.push('#' + s.theme);
+  return bits.map(esc).join(' · ');
+}
+function talkRowHTML(r, f, flat) {
+  var t = r.talk;
+  var on = PICKS.has(t.sid);
+  return '<div class="talk' + (flat ? ' time-row' : '') + (on ? ' is-on' : '') + '" data-talk="' + t.sid +
+    '" tabindex="0" role="button" aria-label="Open details">' +
+    '<span class="t-time">' + hhmm(t.start) + '</span>' +
+    '<div class="t-body"><div class="t-title">' + hi(t.title, f.q) + '</div>' +
+    '<div class="t-who">' + hi((t.honorific ? t.honorific + ' ' : '') + t.presenter, f.q) +
+    (t.affiliation ? ' <span class="aff">&middot; ' + hi(t.affiliation, f.q) + '</span>' : '') +
+    '</div>' +
+    (flat ? '<div class="t-meta">' + talkMetaHTML(r.session) + '</div>' : '') +
+    noteBadgesHTML(t.sid) + '</div>' +
+    '<button class="star" data-sid="' + t.sid + '" aria-pressed="' + on + '" ' +
+    'aria-label="' + (on ? 'Remove from' : 'Add to') + ' my schedule" title="' + (on ? 'Remove from' : 'Add to') + ' my schedule">' +
+    starSVG(on) + '</button></div>';
+}
+function renderProgramme() {
+  if (CROSS_DEVICE_SYNC && programmeLayout() === 'time') {
+    renderProgrammeByTime();
+    return;
+  }
+  var f = currentFilters();
+  var recs = programmeRecs(f);
+  var evts = programmeEvents(f);
 
   if (!recs.length && (f.mine || f.notes || f.revisit || f.contact || !evts.length)) {
     el('content').innerHTML = programmeEmptyHTML(f);
@@ -390,6 +432,60 @@ function renderProgramme() {
   el('content').innerHTML = html.join('');
 }
 
+function renderProgrammeByTime() {
+  var f = currentFilters();
+  var recs = programmeRecs(f).slice().sort(function (a, b) {
+    return a.session.date.localeCompare(b.session.date) ||
+      mins(a.talk.start) - mins(b.talk.start) ||
+      mins(a.talk.end) - mins(b.talk.end) ||
+      String(a.session.room).localeCompare(String(b.session.room)) ||
+      a.talk.title.localeCompare(b.talk.title);
+  });
+  var evts = programmeEvents(f);
+
+  if (!recs.length && (f.mine || f.notes || f.revisit || f.contact || !evts.length)) {
+    el('content').innerHTML = programmeEmptyHTML(f);
+    return;
+  }
+
+  var entries = [];
+  recs.forEach(function (r) {
+    entries.push({ type: 'talk', date: r.session.date, start: r.talk.start, r: r });
+  });
+  evts.forEach(function (e) {
+    entries.push({ type: 'event', date: e.date, start: e.start || '00:00', e: e });
+  });
+  entries.sort(function (a, b) {
+    return a.date.localeCompare(b.date) || mins(a.start) - mins(b.start);
+  });
+
+  var shown = 0, capped = false, html = ['<div class="time-list">'];
+  var lastSlot = '';
+  entries.forEach(function (en) {
+    if (capped) return;
+    if (en.type === 'event') {
+      html.push(bandHTML(en.e));
+      return;
+    }
+    var slot = en.date + ' ' + en.r.talk.start;
+    if (slot !== lastSlot) {
+      lastSlot = slot;
+      var dayPrefix = DAY === 'all' ? dayShort(en.date) + ' · ' : '';
+      html.push('<div class="time-slot-head">' + dayPrefix + hhmm(en.r.talk.start) + '</div>');
+    }
+    html.push(talkRowHTML(en.r, f, true));
+    shown++;
+    if (shown >= RENDER_CAP) capped = true;
+  });
+  html.push('</div>');
+
+  if (capped) {
+    html.push('<div class="note">Showing the first ' + shown + ' of ' + recs.length +
+      ' matching talks. Narrow the search, room, or day to see the rest.</div>');
+  }
+  el('content').innerHTML = html.join('');
+}
+
 function bandHTML(e) {
   var when = e.start ? hhmm(e.start) + (e.end ? ' – ' + hhmm(e.end) : '') : '';
   var loc = (e.location || '').replace(/\s*\|\s*/g, ' · ').replace(/ · NZICC$/, '');
@@ -417,17 +513,7 @@ function cardHTML(g, f) {
     (themeTag ? '<span>' + themeTag + '</span>' : '') +
     '</div></div></div>'];
   g.talks.forEach(function (t) {
-    var on = PICKS.has(t.sid);
-    out.push('<div class="talk' + (on ? ' is-on' : '') + '" data-talk="' + t.sid +
-      '" tabindex="0" role="button" aria-label="Open details">' +
-      '<span class="t-time">' + hhmm(t.start) + '</span>' +
-      '<div class="t-body"><div class="t-title">' + hi(t.title, f.q) + '</div>' +
-      '<div class="t-who">' + hi((t.honorific ? t.honorific + ' ' : '') + t.presenter, f.q) +
-      (t.affiliation ? ' <span class="aff">&middot; ' + hi(t.affiliation, f.q) + '</span>' : '') +
-      '</div>' + noteBadgesHTML(t.sid) + '</div>' +
-      '<button class="star" data-sid="' + t.sid + '" aria-pressed="' + on + '" ' +
-      'aria-label="' + (on ? 'Remove from' : 'Add to') + ' my schedule" title="' + (on ? 'Remove from' : 'Add to') + ' my schedule">' +
-      starSVG(on) + '</button></div>');
+    out.push(talkRowHTML({ talk: t, session: s }, f, false));
   });
   out.push('</article>');
   return out.join('');
@@ -635,6 +721,18 @@ function startUpNextTimer() {
 function updatePersonalUI() {
   var tab = el('upnextTab');
   if (tab) tab.hidden = !CROSS_DEVICE_SYNC;
+  updateProgLayoutUI();
+}
+function updateProgLayoutUI() {
+  var wrap = el('progLayoutWrap');
+  if (!wrap) return;
+  wrap.hidden = !CROSS_DEVICE_SYNC;
+  var layout = programmeLayout();
+  wrap.querySelectorAll('.prog-layout-btn').forEach(function (btn) {
+    var on = btn.dataset.layout === layout;
+    btn.classList.toggle('is-on', on);
+    btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+  });
 }
 
 /* ---------- talk detail ---------- */
@@ -1277,7 +1375,10 @@ function toggle(sid) {
   // A full re-render of a day is ~600 rows; doing that on every star tap feels
   // sluggish on a phone. Patch the affected rows in place instead, and only
   // re-render when the toggle actually changes which rows belong on screen.
-  if (VIEW === 'mine' || VIEW === 'upnext' || el('onlyMine').checked) { render(); return; }
+  if (VIEW === 'mine' || VIEW === 'upnext' || el('onlyMine').checked ||
+      (VIEW === 'programme' && CROSS_DEVICE_SYNC && programmeLayout() === 'time')) {
+    render(); return;
+  }
 
   var on = PICKS.has(sid);
   var label = (on ? 'Remove from' : 'Add to') + ' my schedule';
@@ -1441,6 +1542,13 @@ function wire() {
   el('onlyNotes').addEventListener('change', render);
   el('onlyRevisit').addEventListener('change', render);
   el('onlyContact').addEventListener('change', render);
+  var progLayout = el('progLayoutWrap');
+  if (progLayout) {
+    progLayout.addEventListener('click', function (e) {
+      var btn = e.target.closest('.prog-layout-btn');
+      if (btn) setProgrammeLayout(btn.dataset.layout);
+    });
+  }
   el('btnShare').addEventListener('click', copyShare);
   if (el('syncCodeInput')) {
     el('syncCodeInput').addEventListener('change', function () {
