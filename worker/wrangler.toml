@@ -4,4 +4,4 @@ compatibility_date = "2024-01-01"
 
 [[kv_namespaces]]
 binding = "SYNC"
-id = "REPLACE_AFTER_KV_CREATE"
+id = "4b07e39f464c4bb791193fe80b2b2e51"

@@ -1,4 +1,2 @@
-/* Cross-device sync endpoint.
-   Deploy once: cd worker && ./deploy.sh
-   Then set the URL wrangler prints below. */
-window.ICRS_SYNC_URL = '';
+/* Cross-device sync endpoint (Cloudflare Worker). */
+window.ICRS_SYNC_URL = 'https://icrs2026-sync.orlando-code.workers.dev';
