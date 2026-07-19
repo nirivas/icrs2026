@@ -75,7 +75,11 @@
 </div>
 
 <div id="mineControls" class="wrap" hidden>
-  <p class="mine-note">Picks and notes are stored in this browser only. Clearing site data removes them. Share links move picks between devices, not notes — use <b>Backup</b> / <b>Restore</b> for that.</p>
+  <p class="mine-note" id="mineNote">Picks and notes are stored in this browser only. Clearing site data removes them. Share links move picks between devices, not notes — use <b>Backup</b> / <b>Restore</b> for that.</p>
+  <label class="live-sync" id="liveSyncWrap" hidden>
+    <input type="checkbox" id="liveSyncChk" checked>
+    <span>Update link in address bar when I edit</span>
+  </label>
   <div class="mine-bar">
     <button id="btnShare" class="btn" type="button">Copy share link</button>
     <button id="btnNotesMd" class="btn" type="button">Notes (.md)</button>

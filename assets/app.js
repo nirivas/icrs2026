@@ -21,6 +21,9 @@ var LS_CURRENT = 'icrs2026.current';
 var LS_PICKS = 'icrs2026.picks.';
 var LS_NOTES = 'icrs2026.notes.';
 var LS_HELP = 'icrs2026.helpSeen';
+var LS_LIVE_SYNC = 'icrs2026.liveSync';
+var CROSS_DEVICE_SYNC = /orlando-code\.github\.io$/i.test(location.hostname);
+var SYNC_HASH_MAX = 7500;
 var NOTE_MAX = 4000;
 var NOTE_TAGS = [
   { id: 'revisit', label: 'Revisit' },
@@ -106,6 +109,7 @@ function loadPicks(name) { return new Set(readJSON(LS_PICKS + name, [])); }
 function savePicks() {
   if (!PROFILE) return;
   writeJSON(LS_PICKS + PROFILE, Array.from(PICKS));
+  pushSyncHash();
 }
 function loadNotes(name) {
   var raw = readJSON(LS_NOTES + name, {});
@@ -131,6 +135,7 @@ function saveNotes() {
     if (n.text || n.revisit || n.contact) out[sid] = n;
   });
   writeJSON(LS_NOTES + PROFILE, out);
+  pushSyncHash();
 }
 function getNote(sid) {
   var n = NOTES[sid];
@@ -773,14 +778,108 @@ function pickRestoreFile() {
   el('restoreFile').click();
 }
 
-/* ---------- share ---------- */
+/* ---------- share & cross-device sync (orlando-code site) ---------- */
+function liveSyncOn() {
+  if (!CROSS_DEVICE_SYNC) return false;
+  try { return localStorage.getItem(LS_LIVE_SYNC) !== '0'; } catch (e) { return true; }
+}
+function b64urlEncode(str) {
+  return btoa(unescape(encodeURIComponent(str))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+function b64urlDecode(str) {
+  var s = String(str).replace(/-/g, '+').replace(/_/g, '/');
+  while (s.length % 4) s += '=';
+  return decodeURIComponent(escape(atob(s)));
+}
+function packNotesForUrl() {
+  var rows = [];
+  Object.keys(NOTES).forEach(function (sid) {
+    var n = NOTES[sid];
+    if (!n || (!n.text && !n.revisit && !n.contact)) return;
+    rows.push([sid, n.text || '', n.revisit ? 1 : 0, n.contact ? 1 : 0]);
+  });
+  return rows;
+}
+function unpackNotesFromUrl(rows) {
+  var out = {};
+  if (!Array.isArray(rows)) return out;
+  rows.forEach(function (row) {
+    if (!row || !row[0]) return;
+    var n = {
+      text: String(row[1] || '').slice(0, NOTE_MAX),
+      revisit: !!row[2],
+      contact: !!row[3]
+    };
+    if (n.text || n.revisit || n.contact) out[row[0]] = n;
+  });
+  return out;
+}
+function buildSyncHash() {
+  if (!PROFILE) return '';
+  var parts = ['n=' + encodeURIComponent(PROFILE)];
+  if (PICKS.size) parts.push('s=' + Array.from(PICKS).join(''));
+  if (CROSS_DEVICE_SYNC) {
+    var packed = packNotesForUrl();
+    if (packed.length) {
+      var enc = b64urlEncode(JSON.stringify(packed));
+      if (enc.length > SYNC_HASH_MAX) return null;
+      parts.push('o=' + enc);
+    }
+  }
+  return parts.join('&');
+}
+function syncURL() {
+  if (!PROFILE) return siteURL();
+  var h = buildSyncHash();
+  if (h === null) return null;
+  return location.origin + location.pathname + (h ? '#' + h : '');
+}
+function pushSyncHash() {
+  if (!CROSS_DEVICE_SYNC || !liveSyncOn() || !PROFILE) return;
+  var h = buildSyncHash();
+  if (h === null) return;
+  var path = location.pathname + location.search + '#' + h;
+  if (location.pathname + location.search + location.hash !== path) {
+    history.replaceState(null, '', path);
+  }
+}
+function applyNotesFromPacked(packed, who) {
+  var incoming = unpackNotesFromUrl(packed);
+  var keys = Object.keys(incoming);
+  if (!keys.length) return 0;
+  if (who && who !== PROFILE) {
+    var list = profiles();
+    if (list.indexOf(who) === -1) { list.push(who); saveProfiles(list); }
+    setProfile(who);
+  }
+  keys.forEach(function (sid) {
+    if (BY_SID.has(sid)) NOTES[sid] = incoming[sid];
+  });
+  writeJSON(LS_NOTES + PROFILE, (function () {
+    var out = {};
+    Object.keys(NOTES).forEach(function (sid) {
+      var n = NOTES[sid];
+      if (n && (n.text || n.revisit || n.contact)) out[sid] = n;
+    });
+    return out;
+  })());
+  keys.forEach(function (sid) { patchNoteBadges(sid); });
+  pushSyncHash();
+  return keys.length;
+}
 function shareURL() {
-  var sids = myPicks().map(function (r) { return r.talk.sid; }).join('');
-  return location.origin + location.pathname + '#n=' + encodeURIComponent(PROFILE) + '&s=' + sids;
+  return syncURL() || (location.origin + location.pathname);
 }
 function copyShare() {
-  if (!PICKS.size) { toast('Pick some talks first.'); return; }
-  copyText(shareURL(), 'Share link copied — open it on your phone.');
+  if (!PROFILE) { toast('Set up a profile first.'); return; }
+  if (!PICKS.size && !notedTalks().length) {
+    toast('Star a talk or add a note first.'); return;
+  }
+  var url = syncURL();
+  if (!url) { toast('Too much data for a link — use Backup instead.'); return; }
+  copyText(url, CROSS_DEVICE_SYNC
+    ? 'Sync link copied — open on your other device for picks and notes.'
+    : 'Share link copied — open it on your phone.');
 }
 function siteURL() {
   return location.origin + location.pathname;
@@ -810,15 +909,20 @@ function loadQR() {
   return QR_LOAD;
 }
 function renderShare() {
-  var url = siteURL();
+  var url = syncURL() || siteURL();
+  var lead = CROSS_DEVICE_SYNC && PROFILE
+    ? 'Scan or copy this link to load your picks and notes on another device. After changes here, copy the link again on your other device.'
+    : 'Scan this code to open the ICRS 2026 planner on another phone or laptop.';
   el('content').innerHTML =
     '<div class="qr-panel">' +
-      '<p class="qr-lead">Scan this code to open the ICRS 2026 planner on another phone or laptop.</p>' +
+      '<p class="qr-lead">' + lead + '</p>' +
       '<div class="qr-box" id="qrBox" aria-busy="true">Loading QR code…</div>' +
       '<p class="qr-url" id="qrUrl">' + esc(url) + '</p>' +
       '<button id="btnCopySite" class="btn" type="button">Copy link</button>' +
     '</div>';
-  el('btnCopySite').addEventListener('click', copySiteLink);
+  el('btnCopySite').addEventListener('click', function () {
+    copyText(url, CROSS_DEVICE_SYNC ? 'Sync link copied.' : 'Site link copied.');
+  });
   loadQR().then(function () {
     var qr = qrcode(0, 'M');
     qr.addData(url);
@@ -834,34 +938,83 @@ function renderShare() {
     el('qrBox').removeAttribute('aria-busy');
   });
 }
-function importFromHash() {
+function importFromHash(opts) {
+  opts = opts || {};
   var h = location.hash || '';
-  var ms = h.match(/[#&]s=([0-9a-fA-F]+)/);
-  if (!ms) return false;
-  var name = '';
+  if (!h || h.length < 3) return false;
+
+  var ms = h.match(/[#&]s=([0-9a-fA-F]*)/);
   var mn = h.match(/[#&]n=([^&]*)/);
+  var mo = CROSS_DEVICE_SYNC ? h.match(/[#&]o=([^&]*)/) : null;
+  var hasPicks = ms && ms[1];
+  var hasNotes = mo && mo[1];
+  if (!hasPicks && !hasNotes) return false;
+
+  var name = '';
   if (mn) { try { name = decodeURIComponent(mn[1]); } catch (e) { name = ''; } }
-  var sids = ms[1].match(/.{1,8}/g) || [];
-  var valid = sids.filter(function (s) { return BY_SID.has(s); });
-  history.replaceState(null, '', location.pathname + location.search);
-  if (!valid.length) { toast('That share link had no talks we recognise.'); return false; }
+  var who = (name || PROFILE || 'Synced').slice(0, 40);
+  var silent = CROSS_DEVICE_SYNC && (liveSyncOn() || !!hasNotes);
 
-  var who = (name || 'Shared schedule').slice(0, 40);
-  var msg = 'Import ' + valid.length + ' talk' + (valid.length === 1 ? '' : 's') +
-    ' from a shared schedule into the profile "' + who + '"?' +
-    (valid.length < sids.length ? '\n\n(' + (sids.length - valid.length) +
-      ' entr' + (sids.length - valid.length === 1 ? 'y is' : 'ies are') +
-      ' not in the current programme and will be skipped.)' : '');
-  if (!window.confirm(msg)) return false;
+  var noteCount = 0;
+  if (hasNotes) {
+    try { noteCount = applyNotesFromPacked(JSON.parse(b64urlDecode(mo[1])), who); }
+    catch (e) { /* ignore bad note payload */ }
+  }
 
-  var list = profiles();
-  if (list.indexOf(who) === -1) { list.push(who); saveProfiles(list); }
-  setProfile(who);
-  PICKS = new Set(valid);
-  savePicks();
-  updateCount();
-  toast('Imported ' + valid.length + ' talks into "' + who + '".');
+  var valid = [];
+  if (hasPicks) {
+    valid = (ms[1].match(/.{1,8}/g) || []).filter(function (s) { return BY_SID.has(s); });
+  }
+  if (!valid.length && !noteCount) {
+    if (hasPicks) toast('That link had no talks we recognise.');
+    return false;
+  }
+
+  if (!silent && valid.length) {
+    var msg = 'Import ' + valid.length + ' talk' + (valid.length === 1 ? '' : 's') +
+      ' into "' + who + '"?' + (noteCount ? ' (' + noteCount + ' notes too.)' : '') +
+      (valid.length < (ms[1].match(/.{1,8}/g) || []).length
+        ? '\n\n(Some entries are not in the current programme and will be skipped.)' : '');
+    if (!window.confirm(msg)) return false;
+  }
+
+  if (valid.length) {
+    var list = profiles();
+    if (list.indexOf(who) === -1) { list.push(who); saveProfiles(list); }
+    if (who !== PROFILE) setProfile(who);
+    PICKS = new Set(valid);
+    writeJSON(LS_PICKS + PROFILE, Array.from(PICKS));
+    updateCount();
+    pushSyncHash();
+  }
+
+  if (silent) pushSyncHash();
+  else history.replaceState(null, '', location.pathname + location.search);
+
+  if (noteCount || valid.length) {
+    if (!opts.quiet) {
+      var parts = [];
+      if (valid.length) parts.push(valid.length + ' talk' + (valid.length === 1 ? '' : 's'));
+      if (noteCount) parts.push(noteCount + ' note' + (noteCount === 1 ? '' : 's'));
+      toast((silent ? 'Synced ' : 'Imported ') + parts.join(' and ') + '.');
+    }
+  }
   return true;
+}
+function updateSyncUI() {
+  var note = document.querySelector('.mine-note');
+  var btn = el('btnShare');
+  var wrap = el('liveSyncWrap');
+  if (!CROSS_DEVICE_SYNC) return;
+  if (btn) btn.textContent = 'Copy sync link';
+  if (wrap) wrap.hidden = false;
+  if (note) {
+    note.innerHTML = 'Open the same <b>sync link</b> on each device (or scan the Share tab QR). ' +
+      'Picks and notes are encoded in the link &mdash; copy it again after you make changes. ' +
+      'Use <b>Backup</b> if your notes grow too long for a link.';
+  }
+  var chk = el('liveSyncChk');
+  if (chk) chk.checked = liveSyncOn();
 }
 
 /* ---------- profile dialog ---------- */
@@ -1111,6 +1264,13 @@ function wire() {
   el('onlyRevisit').addEventListener('change', render);
   el('onlyContact').addEventListener('change', render);
   el('btnShare').addEventListener('click', copyShare);
+  if (el('liveSyncChk')) {
+    el('liveSyncChk').addEventListener('change', function () {
+      try { localStorage.setItem(LS_LIVE_SYNC, el('liveSyncChk').checked ? '1' : '0'); } catch (e) {}
+      if (el('liveSyncChk').checked) pushSyncHash();
+      else history.replaceState(null, '', location.pathname + location.search);
+    });
+  }
   el('btnNotesMd').addEventListener('click', downloadNotesMd);
   el('btnBackup').addEventListener('click', downloadBackup);
   el('btnRestore').addEventListener('click', pickRestoreFile);
@@ -1171,6 +1331,8 @@ function boot() {
       else if (list.length) setProfile(list[0]);
 
       var imported = importFromHash();
+      updateSyncUI();
+      if (CROSS_DEVICE_SYNC && liveSyncOn() && PROFILE) pushSyncHash();
       setDay(pickInitialDay());
       setView('programme');
       if (!PROFILE && !imported) openProfile(true);
@@ -1196,5 +1358,8 @@ if ('serviceWorker' in navigator && location.protocol !== 'file:') {
     navigator.serviceWorker.register('sw.js').catch(function () {});
   });
 }
+window.addEventListener('pageshow', function () {
+  if (CROSS_DEVICE_SYNC && location.hash && DATA) importFromHash({ quiet: true });
+});
 el('content').innerHTML = '<div class="loading">Loading the programme…</div>';
 boot();

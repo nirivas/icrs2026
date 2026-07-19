@@ -13,13 +13,20 @@
   }
 }
 *{box-sizing:border-box}
-html,body{margin:0}
+html{
+  overflow-x:clip;
+  overscroll-behavior-x:none;
+}
 body{
+  margin:0;
   background:var(--bg); color:var(--ink);
   font:15px/1.5 "Inter",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
   -webkit-font-smoothing:antialiased; overflow-wrap:anywhere;
+  overflow-x:clip;
+  overscroll-behavior-x:none;
+  max-width:100%;
 }
-.wrap{max-width:1080px;margin:0 auto;padding:0 14px}
+.wrap{max-width:1080px;margin:0 auto;padding:0 14px;width:100%}
 a{color:var(--teal)}
 
 /* top bar */
@@ -119,7 +126,7 @@ select{
 }
 
 /* day tabs */
-.days{display:flex;gap:6px;overflow-x:auto;padding:2px 0 10px;scrollbar-width:none}
+.days{display:flex;gap:6px;overflow-x:auto;padding:2px 0 10px;scrollbar-width:none;overscroll-behavior-x:contain;max-width:100%}
 .days::-webkit-scrollbar{display:none}
 .day-tab{
   flex:none;background:var(--panel);border:1px solid var(--line);color:var(--ink-2);
@@ -200,6 +207,11 @@ mark{background:color-mix(in srgb,var(--sun) 45%,transparent);color:inherit;bord
   border-radius:var(--r);padding:8px 11px;
 }
 .mine-bar{display:flex;gap:8px;flex-wrap:wrap;padding:8px 0 10px}
+.live-sync{
+  display:flex;align-items:center;gap:8px;margin:0 0 8px;
+  font-size:12px;color:var(--ink-2);cursor:pointer;user-select:none;
+}
+.live-sync input{accent-color:var(--teal);width:15px;height:15px;margin:0}
 .btn{
   border:1px solid var(--line);background:var(--panel);color:var(--ink);
   border-radius:var(--r);padding:8px 13px;font:inherit;font-size:13px;font-weight:600;cursor:pointer;
@@ -271,7 +283,7 @@ mark{background:color-mix(in srgb,var(--sun) 45%,transparent);color:inherit;bord
 .dlg-actions{display:flex;justify-content:flex-end;gap:8px;margin:16px 0 0;padding:0}
 
 /* talk detail dialog */
-.dlg-talk{max-width:660px;width:calc(100% - 22px)}
+.dlg-talk{max-width:min(660px,calc(100vw - 22px));width:calc(100% - 22px)}
 .talk-dlg{display:flex;flex-direction:column;max-height:86vh}
 .talk-dlg-head{
   display:flex;gap:10px;align-items:flex-start;padding:15px 15px 12px;
