@@ -55,42 +55,68 @@ a{color:var(--teal)}
 }
 
 /* view tabs */
-.views{display:flex;gap:6px;padding-top:10px;padding-bottom:2px}
+.views{display:flex;gap:4px;padding-top:10px;padding-bottom:2px}
 .view-tab{
-  flex:1; background:transparent; border:0; border-bottom:2px solid transparent;
-  padding:9px 6px; font:inherit; font-weight:600; color:var(--ink-2); cursor:pointer;
-  display:flex;align-items:center;justify-content:center;gap:7px;
+  flex:1;min-width:0;background:transparent;border:0;border-bottom:2px solid transparent;
+  padding:9px 4px;font:inherit;font-size:13px;font-weight:600;color:var(--ink-2);cursor:pointer;
+  display:flex;align-items:center;justify-content:center;gap:5px;line-height:1.2;
 }
 .view-tab.is-on{color:var(--teal);border-bottom-color:var(--teal)}
+.tab-text{display:inline-flex;align-items:center;min-width:0}
+.tab-short{display:none}
 .count{
-  background:var(--coral);color:#fff;border-radius:999px;
-  min-width:19px;padding:1px 5px;font-size:11px;font-weight:700;
+  flex:none;background:var(--coral);color:#fff;border-radius:999px;
+  min-width:19px;padding:1px 6px;font-size:11px;font-weight:700;line-height:1.35;
+  font-variant-numeric:tabular-nums;
 }
 .count[data-zero="1"]{background:var(--ink-3)}
+@media(max-width:420px){
+  .view-tab{font-size:12px;padding:8px 2px;gap:4px}
+  .tab-long{display:none}
+  .tab-short{display:inline}
+}
 
 /* controls */
-.controls{display:flex;gap:8px;flex-wrap:wrap;padding:10px 0 8px}
+.controls{display:flex;flex-direction:column;gap:8px;padding:10px 0 8px}
+.controls-row{display:flex;gap:8px;flex-wrap:wrap}
 .search-wrap{position:relative;flex:1 1 100%;min-width:0}
 .search-icon{position:absolute;left:11px;top:50%;transform:translateY(-50%);color:var(--ink-3);pointer-events:none}
 #q{
   width:100%;padding:10px 34px;border:1px solid var(--line);border-radius:var(--r);
   background:var(--panel);color:var(--ink);font:inherit;
 }
-#q:focus,select:focus{outline:2px solid var(--teal-2);outline-offset:1px}
+#q:focus,select:focus,.filter-check:focus-within{outline:2px solid var(--teal-2);outline-offset:1px}
 .q-clear{
   position:absolute;right:6px;top:50%;transform:translateY(-50%);
   border:0;background:transparent;color:var(--ink-3);font-size:20px;cursor:pointer;padding:0 6px;line-height:1;
 }
+select,.filter-check{
+  min-height:38px;box-sizing:border-box;border:1px solid var(--line);border-radius:var(--r);
+  background:var(--panel);color:var(--ink);font:inherit;font-size:13px;
+}
 select{
-  flex:1 1 150px;padding:9px 10px;border:1px solid var(--line);border-radius:var(--r);
-  background:var(--panel);color:var(--ink);font:inherit;min-width:0;
+  flex:1 1 140px;padding:8px 10px;min-width:0;
 }
-.only-mine{
-  display:flex;align-items:center;gap:7px;padding:0 10px;
-  border:1px solid var(--line);border-radius:var(--r);background:var(--panel);
-  font-size:13px;color:var(--ink-2);cursor:pointer;flex:0 0 auto;
+.filter-checks{display:flex;gap:8px;flex-wrap:wrap;width:100%}
+.filter-check{
+  display:inline-flex;align-items:center;justify-content:center;gap:7px;
+  padding:0 11px;color:var(--ink-2);cursor:pointer;flex:1 1 calc(50% - 4px);min-width:0;
+  user-select:none;white-space:nowrap;
 }
-.only-mine input{accent-color:var(--teal)}
+.filter-check:has(:checked){
+  border-color:var(--teal);color:var(--teal);
+  background:color-mix(in srgb,var(--teal) 8%,var(--panel));
+}
+.filter-check input{
+  accent-color:var(--teal);width:15px;height:15px;margin:0;flex:none;
+}
+@media(min-width:560px){
+  .filter-check{flex:1 1 0;max-width:none}
+}
+@media(min-width:760px){
+  .controls-row select{flex:1 1 180px}
+  .filter-check{flex:0 1 auto}
+}
 
 /* day tabs */
 .days{display:flex;gap:6px;overflow-x:auto;padding:2px 0 10px;scrollbar-width:none}
@@ -167,7 +193,13 @@ select{
 mark{background:color-mix(in srgb,var(--sun) 45%,transparent);color:inherit;border-radius:3px;padding:0 1px}
 
 /* my schedule */
-.mine-bar{display:flex;gap:8px;flex-wrap:wrap;padding:10px 0}
+.mine-note{
+  margin:10px 0 0;font-size:12px;line-height:1.45;color:var(--ink-2);
+  background:color-mix(in srgb,var(--sun) 10%,transparent);
+  border:1px solid color-mix(in srgb,var(--sun) 30%,transparent);
+  border-radius:var(--r);padding:8px 11px;
+}
+.mine-bar{display:flex;gap:8px;flex-wrap:wrap;padding:8px 0 10px}
 .btn{
   border:1px solid var(--line);background:var(--panel);color:var(--ink);
   border-radius:var(--r);padding:8px 13px;font:inherit;font-size:13px;font-weight:600;cursor:pointer;
