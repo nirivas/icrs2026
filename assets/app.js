@@ -25,6 +25,7 @@ var LS_HELP = 'icrs2026.helpSeen';
 var LS_SYNC_ROOM = 'icrs2026.syncRoom';
 var LS_SYNC_AT = 'icrs2026.syncAt';
 var LS_PROG_LAYOUT = 'icrs2026.progLayout';
+var LS_NOTICE = 'icrs2026.noticeSeen';
 var SITE_MODE = window.ICRS_SITE_MODE || 'public';
 var STAGING_SITE = SITE_MODE === 'staging';
 var ENHANCED_UI = SITE_MODE !== 'public';
@@ -1535,6 +1536,22 @@ function maybeShowHelp() {
   try { seen = localStorage.getItem(LS_HELP); } catch (e) {}
   if (!seen && !el('helpDlg').open && !el('profileDlg').open) openHelp();
 }
+function showNotice() {
+  var box = el('notice');
+  if (!box) return;
+  box.style.display = '';
+  var seen;
+  try { seen = localStorage.getItem(LS_NOTICE); } catch (e) {}
+  if (seen) return;
+  box.hidden = false;
+}
+function dismissNotice() {
+  var box = el('notice');
+  if (!box) return;
+  box.hidden = true;
+  box.style.display = 'none';
+  try { localStorage.setItem(LS_NOTICE, '1'); } catch (e) {}
+}
 
 function renderProfileList() {
   var list = profiles();
@@ -1688,6 +1705,7 @@ function wire() {
   el('helpDlg').addEventListener('click', function (ev) {
     if (ev.target === el('helpDlg')) closeHelp();
   });
+  if (el('noticeClose')) el('noticeClose').addEventListener('click', dismissNotice);
 
   el('talkClose').addEventListener('click', closeTalk);
   el('talkDlg').addEventListener('close', function () { OPEN_SID = null; });
@@ -1830,6 +1848,7 @@ function boot() {
       el('capturedAt').textContent = d.meta.capturedAt;
       buildFilters();
       wire();
+      showNotice();
 
       var list = profiles();
       var cur = '';
