@@ -174,7 +174,7 @@ select,.filter-check{
 select{
   flex:1 1 140px;padding:8px 10px;min-width:0;
 }
-.filter-checks{display:flex;gap:8px;flex-wrap:wrap;width:100%}
+.filter-checks{display:flex;gap:8px;flex-wrap:wrap;width:100%;justify-content:center}
 .filter-check{
   display:inline-flex;align-items:center;justify-content:center;gap:7px;
   padding:0 9px;color:var(--ink-2);cursor:pointer;flex:1 1 0;min-width:0;
@@ -431,7 +431,8 @@ mark{background:color-mix(in srgb,var(--sun) 45%,transparent);color:inherit;bord
 .abstract em{font-style:italic}
 .my-notes{border-top:1px solid var(--line);margin-top:12px;padding-top:11px;min-width:0;max-width:100%;overflow-x:clip}
 .my-notes h3{margin:0 0 8px;font-size:12px;text-transform:uppercase;letter-spacing:.6px;color:var(--teal)}
-.note-tags{display:flex;gap:7px;flex-wrap:wrap;margin-bottom:8px}
+.mine-hide-past{margin:10px 0 0}
+.note-tags{display:flex;gap:7px;flex-wrap:wrap;margin-bottom:8px;justify-content:center}
 .note-tag-btn{
   border:1px solid var(--line);background:var(--bg);color:var(--ink-2);
   border-radius:999px;padding:5px 11px;font:inherit;font-size:12px;font-weight:600;cursor:pointer;

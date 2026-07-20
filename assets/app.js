@@ -301,7 +301,7 @@ function currentFilters() {
     notes: el('onlyNotes').checked,
     revisit: el('onlyRevisit').checked,
     contact: el('onlyContact').checked,
-    hidePast: el('hidePast') && el('hidePast').checked
+    hidePast: hidePastOn()
   };
 }
 function matches(rec, f) {
@@ -841,6 +841,11 @@ function findClashes(list) {
 function pickMineScrollTarget() {
   var now = venueNow();
   var list = myPicks();
+  if (hidePastOn()) {
+    list = list.filter(function (r) {
+      return !talkEndedWithBuffer(r.session.date, r.talk.end, now);
+    });
+  }
   if (!list.length) return null;
   var today = list.filter(function (r) { return r.session.date === now.date; });
   if (today.length) {
@@ -863,17 +868,28 @@ function scrollMineToCurrent() {
 }
 
 function renderMine() {
-  var list = myPicks();
-  if (!list.length) {
+  var all = myPicks();
+  if (!all.length) {
     el('content').innerHTML = '<div class="empty"><h3>No talks picked yet</h3>' +
       '<p>Open <b>Programme</b> and tap the star next to any talk to build your schedule.</p></div>';
+    return;
+  }
+  var list = all;
+  if (hidePastOn()) {
+    list = all.filter(function (r) {
+      return !talkEndedWithBuffer(r.session.date, r.talk.end);
+    });
+  }
+  if (!list.length) {
+    el('content').innerHTML = '<div class="empty"><h3>All finished</h3>' +
+      '<p>Every picked talk has ended (with a ' + PAST_HIDE_BUFFER + '-minute buffer). Turn off <b>Hide finished talks</b> to see them.</p></div>';
     return;
   }
   var clash = findClashes(list);
   var html = [];
   if (clash.size) {
     html.push('<div class="note"><b>' + clash.size + ' of your ' + list.length +
-      ' picks overlap.</b> They are marked below — you cannot attend both.</div>');
+      ' visible picks overlap.</b> They are marked below — you cannot attend both.</div>');
   }
   var lastDay = null, prev = null;
   list.forEach(function (r) {
@@ -1579,17 +1595,24 @@ function buildFilters() {
 function pinnedDay() {
   try { return sessionStorage.getItem(SS_DAY_PINNED) || ''; } catch (e) { return ''; }
 }
-function restoreHidePast() {
-  var box = el('hidePast');
-  if (!box) return;
-  try {
-    if (localStorage.getItem(LS_HIDE_PAST) === '1') box.checked = true;
-  } catch (e) {}
+function hidePastOn() {
+  var a = el('hidePast'), b = el('hidePastMine');
+  return !!(a && a.checked) || !!(b && b.checked);
 }
-function saveHidePast() {
-  var box = el('hidePast');
-  if (!box) return;
-  try { localStorage.setItem(LS_HIDE_PAST, box.checked ? '1' : '0'); } catch (e) {}
+function syncHidePast(from) {
+  var on = from ? from.checked : hidePastOn();
+  var a = el('hidePast'), b = el('hidePastMine');
+  if (a && a !== from) a.checked = on;
+  if (b && b !== from) b.checked = on;
+  try { localStorage.setItem(LS_HIDE_PAST, on ? '1' : '0'); } catch (e) {}
+}
+function restoreHidePast() {
+  var on = false;
+  try { on = localStorage.getItem(LS_HIDE_PAST) === '1'; } catch (e) {}
+  syncHidePast({ checked: on });
+}
+function saveHidePast(from) {
+  syncHidePast(from);
 }
 function applyInitialDay() {
   var pinned = pinnedDay();
@@ -1754,10 +1777,12 @@ function wire() {
   el('onlyRevisit').addEventListener('change', render);
   el('onlyContact').addEventListener('change', render);
   restoreHidePast();
-  if (el('hidePast')) el('hidePast').addEventListener('change', function () {
-    saveHidePast();
+  function onHidePastChange(ev) {
+    saveHidePast(ev.target);
     render();
-  });
+  }
+  if (el('hidePast')) el('hidePast').addEventListener('change', onHidePastChange);
+  if (el('hidePastMine')) el('hidePastMine').addEventListener('change', onHidePastChange);
   el('btnShare').addEventListener('click', copyShare);
   el('btnIcs').addEventListener('click', downloadICS);
   el('btnNotesMd').addEventListener('click', downloadNotesMd);
