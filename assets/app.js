@@ -22,27 +22,27 @@ var LS_PICKS = 'icrs2026.picks.';
 var LS_NOTES = 'icrs2026.notes.';
 var LS_PICKS_META = 'icrs2026.picksMeta.';
 var LS_HELP = 'icrs2026.helpSeen';
-var LS_SYNC_ROOM = 'icrs2026.syncRoom';
-var LS_SYNC_AT = 'icrs2026.syncAt';
+// View-only preferences. Deliberately separate keys from picks/notes so that
+// changing how the programme is displayed can never touch saved data.
+var LS_SORT = 'icrs2026.sort';
+var LS_COLLAPSED = 'icrs2026.collapsed';
 var LS_PROG_LAYOUT = 'icrs2026.progLayout';
 var LS_NOTICE = 'icrs2026.noticeSeen';
 var LS_HIDE_PAST = 'icrs2026.hidePast';
 var SS_DAY_PINNED = 'icrs2026.dayPinned';
-var SITE_MODE = window.ICRS_SITE_MODE || 'public';
+var SITE_MODE = window.ICRS_SITE_MODE || (/nirivas\.github\.io$/i.test(location.hostname) ? 'nico' : 'public');
 var STAGING_SITE = SITE_MODE === 'staging';
-var ENHANCED_UI = SITE_MODE !== 'public';
-var CROSS_DEVICE_SYNC = SITE_MODE === 'personal' || SITE_MODE === 'staging';
-var SYNC_URL = (window.ICRS_SYNC_URL || '').replace(/\/$/, '');
-var CLOUD_SYNC = CROSS_DEVICE_SYNC && !!SYNC_URL;
-var SYNC_WORDS = ['coral', 'reef', 'tide', 'kelp', 'shell', 'wave', 'fin', 'bay', 'manta', 'nemo'];
-var cloudPushTimer = null;
-var cloudPullTimer = null;
-var cloudBusy = false;
-var syncCloudReady = false;
-var syncLocalDirty = false;
+var PERSONAL_SITE = SITE_MODE === 'personal';
+var NZ_OFFSET = 12;          // Auckland is UTC+12 (NZST) for 19-24 July 2026
+var SORT = 'time';
 var upNextTimer = null;
 var UP_NEXT_MINS = 30;
-var PAST_HIDE_BUFFER = 15;
+var PAST_HIDE_BUFFER = 5;
+/* Explicit user collapse choices only: { id: true|false }. An id that is absent
+   means "use the default for this group" -- which lets poster blocks start
+   collapsed while ordinary sessions start open, without the two states fighting. */
+var COLLAPSED = {};
+var STORAGE_OK = true;
 var NOTE_MAX = 4000;
 var NOTE_TAGS = [
   { id: 'revisit', label: 'Revisit' },
@@ -87,7 +87,7 @@ function loadAbstracts() {
     .then(function (j) {
       ABSTRACTS = j;
       ABSTRACTS_STATE = 'ready';
-      if (OPEN_SID) fillAbstract(OPEN_SID);   // dialog opened before it landed
+      if (OPEN_SID) fillAbstract(OPEN_SID);
       if (el('q') && el('q').value.trim()) render();
       return j;
     })
@@ -123,30 +123,13 @@ function writeJSON(k, v) {
   try { localStorage.setItem(k, JSON.stringify(v)); }
   catch (e) { toast('Could not save — browser storage is full or blocked.'); }
 }
-function touchPickMeta(sid, on) {
-  if (!PROFILE) return;
-  var meta = readJSON(LS_PICKS_META + PROFILE, {});
-  meta[sid] = { on: !!on, at: Date.now() };
-  writeJSON(LS_PICKS_META + PROFILE, meta);
-}
-function touchPickMetaMany(sids, on) {
-  if (!PROFILE || !sids.length) return;
-  var meta = readJSON(LS_PICKS_META + PROFILE, {});
-  var at = Date.now();
-  sids.forEach(function (sid) { meta[sid] = { on: !!on, at: at }; });
-  writeJSON(LS_PICKS_META + PROFILE, meta);
-}
-function stampNote(n) {
-  n.at = Date.now();
-  return n;
-}
 function profiles() { return readJSON(LS_PROFILES, []); }
 function saveProfiles(list) { writeJSON(LS_PROFILES, list); }
 function loadPicks(name) { return new Set(readJSON(LS_PICKS + name, [])); }
 function savePicks() {
   if (!PROFILE) return;
   writeJSON(LS_PICKS + PROFILE, Array.from(PICKS));
-  markSyncDirty();
+  if (typeof markSyncDirty === 'function') markSyncDirty();
 }
 function loadNotes(name) {
   var raw = readJSON(LS_NOTES + name, {});
@@ -157,8 +140,7 @@ function loadNotes(name) {
     out[sid] = {
       text: String(n.text || '').slice(0, NOTE_MAX),
       revisit: !!n.revisit,
-      contact: !!n.contact,
-      at: parseInt(n.at, 10) || 0
+      contact: !!n.contact
     };
     if (!out[sid].text && !out[sid].revisit && !out[sid].contact) delete out[sid];
   });
@@ -166,38 +148,19 @@ function loadNotes(name) {
 }
 function saveNotes() {
   if (!PROFILE) return;
-  var raw = readJSON(LS_NOTES + PROFILE, {});
+  /* Merge into existing storage so a partial in-memory NOTES object can never
+     drop entries that were not loaded this session. */
+  var out = readJSON(LS_NOTES + PROFILE, {});
   Object.keys(NOTES).forEach(function (sid) {
     var n = NOTES[sid];
     if (!n) return;
-    raw[sid] = {
-      text: n.text,
-      revisit: !!n.revisit,
-      contact: !!n.contact,
-      at: n.at || Date.now()
-    };
+    if (n.text || n.revisit || n.contact) out[sid] = n;
+    else delete out[sid];
   });
-  writeJSON(LS_NOTES + PROFILE, raw);
-  markSyncDirty();
+  writeJSON(LS_NOTES + PROFILE, out);
+  if (typeof markSyncDirty === 'function') markSyncDirty();
 }
-function persistNote(sid, n) {
-  if (!PROFILE) return;
-  var raw = readJSON(LS_NOTES + PROFILE, {});
-  if (n.text || n.revisit || n.contact) {
-    var st = stampNote({
-      text: n.text,
-      revisit: !!n.revisit,
-      contact: !!n.contact
-    });
-    NOTES[sid] = st;
-    raw[sid] = st;
-  } else {
-    delete NOTES[sid];
-    raw[sid] = stampNote({ text: '', revisit: false, contact: false });
-  }
-  writeJSON(LS_NOTES + PROFILE, raw);
-  markSyncDirty();
-}
+function markSyncDirty() {}
 function getNote(sid) {
   var n = NOTES[sid];
   if (!n) return { text: '', revisit: false, contact: false };
@@ -263,19 +226,11 @@ function noteFilterEmptyHTML(f) {
   return '<div class="empty"><h3>No talks match</h3><p>Try a different day or filter.</p></div>';
 }
 function programmeEmptyHTML(f) {
-  if (f.mine && PICKS.size === 0) {
-    return '<div class="empty"><h3>No talks picked yet</h3>' +
-      '<p>Open <b>Programme</b> and tap the star next to any talk to build your schedule.</p></div>';
-  }
-  if (f.notes || f.revisit || f.contact) return noteFilterEmptyHTML(f);
-  if (f.mine) {
-    return '<div class="empty"><h3>No picks match</h3>' +
-      '<p>None of your picks match this day or filter. Try another day or turn off <b>My picks</b>.</p></div>';
-  }
   if (f.hidePast) {
     return '<div class="empty"><h3>All talks finished</h3>' +
-      '<p>Every talk on this day has ended (with a 15-minute buffer). Turn off <b>Hide finished talks</b> to see them.</p></div>';
+      '<p>Every talk on this day has ended (with a ' + PAST_HIDE_BUFFER + '-minute buffer). Turn off <b>Hide finished talks</b> to see them.</p></div>';
   }
+  if (f.notes || f.revisit || f.contact) return noteFilterEmptyHTML(f);
   return '<div class="empty"><h3>No talks match</h3><p>Try a different day, room, or search term.</p></div>';
 }
 function noteBadgesHTML(sid) {
@@ -343,7 +298,6 @@ function currentFilters() {
     q: el('q').value.trim().toLowerCase(),
     room: el('fRoom').value,
     theme: el('fTheme').value,
-    mine: el('onlyMine').checked,
     notes: el('onlyNotes').checked,
     revisit: el('onlyRevisit').checked,
     contact: el('onlyContact').checked,
@@ -355,7 +309,6 @@ function matches(rec, f) {
   if (f.hidePast && talkEndedWithBuffer(s.date, t.end)) return false;
   if (f.room && s.room !== f.room) return false;
   if (f.theme && String(s.theme) !== f.theme) return false;
-  if (f.mine && !PICKS.has(t.sid)) return false;
   if (!matchesNoteFilters(t.sid, f)) return false;
   if (f.q) {
     var note = getNote(t.sid);
@@ -374,20 +327,44 @@ function hi(text, q) {
   return e.slice(0, i) + '<mark>' + e.slice(i, i + q.length) + '</mark>' + e.slice(i + q.length);
 }
 
-/* ---------- render: programme ---------- */
-function programmeRecs(f) {
-  return TALKS.filter(function (r) {
-    if (DAY !== 'all' && r.session.date !== DAY) return false;
-    return matches(r, f);
-  });
-}
-function programmeEvents(f) {
-  var plain = !f.q && !f.room && !f.theme && !f.mine && !f.notes && !f.revisit && !f.contact && !f.hidePast;
-  if (!plain) return [];
-  return DATA.events.filter(function (e) {
-    return DAY === 'all' || e.date === DAY;
-  });
-}
+/* ---------- sort + collapse (view-only preferences) ----------
+   These describe how sessions are grouped on screen. They never read or write
+   picks/notes; the only persisted state is the mode and the collapsed id list. */
+var SORTS = {
+  /* Time is talk-level, not session-level: every talk starting at 10:15 is
+     listed back to back regardless of room, which is what you want when you are
+     deciding where to be right now. The other modes stay session-carded. */
+  time: { flat: true, bands: true },
+  room: {
+    key: function (s) { return 'room:' + (s.room || 'zz'); },
+    head: function (s) {
+      return s.room ? esc(roomLabel(s.room)) + (roomLevel(s.room) ? ' &middot; ' + esc(roomLevel(s.room)) : '')
+                    : 'Other venues';
+    },
+    within: function (a, b) {
+      return (a.s.date).localeCompare(b.s.date) || mins(a.s.start) - mins(b.s.start);
+    },
+    bands: false
+  },
+  session: {
+    key: function (s) { return 'sess:' + (s.code || 'zz'); },
+    head: function (s) { return s.code ? 'Session ' + esc(s.code) : esc(s.title); },
+    within: function (a, b) { return String(a.s.room).localeCompare(String(b.s.room)); },
+    bands: false
+  },
+  topic: {
+    key: function (s) { return 'topic:' + (s.theme || 'zz'); },
+    head: function (s) {
+      return s.theme ? '#' + s.theme + ' ' + esc(s.title) : esc(s.title);
+    },
+    within: function (a, b) {
+      return (a.s.date).localeCompare(b.s.date) || mins(a.s.start) - mins(b.s.start);
+    },
+    bands: false
+  }
+};
+function sortMode() { return SORTS[SORT] ? SORT : 'time'; }
+
 function programmeLayout() {
   try { return localStorage.getItem(LS_PROG_LAYOUT) === 'time' ? 'time' : 'session'; } catch (e) { return 'session'; }
 }
@@ -396,45 +373,101 @@ function setProgrammeLayout(layout) {
   updateProgLayoutUI();
   render();
 }
-function talkMetaHTML(s) {
-  var bits = [];
-  if (s.room) {
-    bits.push(roomLabel(s.room) + (roomLevel(s.room) ? ' (' + roomLevel(s.room) + ')' : ''));
+function updateProgLayoutUI() {
+  var wrap = el('progLayoutWrap');
+  if (!wrap) return;
+  var layout = programmeLayout();
+  wrap.querySelectorAll('.prog-layout-btn').forEach(function (btn) {
+    var on = btn.dataset.layout === layout;
+    btn.classList.toggle('is-on', on);
+    btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+  });
+}
+
+function loadViewPrefs() {
+  try {
+    var s = localStorage.getItem(LS_SORT);
+    if (s && SORTS[s]) SORT = s;
+  } catch (e) {}
+  // Older versions stored an array of collapsed ids; migrate so anyone who had
+  // sessions folded keeps them folded.
+  var raw = readJSON(LS_COLLAPSED, {});
+  COLLAPSED = {};
+  if (Array.isArray(raw)) raw.forEach(function (id) { COLLAPSED[id] = true; });
+  else if (raw && typeof raw === 'object') {
+    Object.keys(raw).forEach(function (id) { COLLAPSED[id] = !!raw[id]; });
   }
-  if (s.code) bits.push(s.code);
-  if (s.theme) bits.push('#' + s.theme);
-  return bits.map(esc).join(' · ');
 }
-function talkRowHTML(r, f, flat) {
-  var t = r.talk;
-  var on = PICKS.has(t.sid);
-  var past = venueSlotEnded(r.session.date, t.end);
-  return '<div class="talk' + (flat ? ' time-row' : '') + (on ? ' is-on' : '') + (past ? ' is-past' : '') + '" data-talk="' + t.sid +
-    '" tabindex="0" role="button" aria-label="Open details">' +
-    '<span class="t-time">' + hhmm(t.start) + '</span>' +
-    '<div class="t-body"><div class="t-title">' + hi(t.title, f.q) + '</div>' +
-    '<div class="t-who">' + hi((t.honorific ? t.honorific + ' ' : '') + t.presenter, f.q) +
-    (t.affiliation ? ' <span class="aff">&middot; ' + hi(t.affiliation, f.q) + '</span>' : '') +
-    '</div>' +
-    (flat ? '<div class="t-meta">' + talkMetaHTML(r.session) + '</div>' : '') +
-    noteBadgesHTML(t.sid) + '</div>' +
-    '<button class="star" data-sid="' + t.sid + '" aria-pressed="' + on + '" ' +
-    'aria-label="' + (on ? 'Remove from' : 'Add to') + ' my schedule" title="' + (on ? 'Remove from' : 'Add to') + ' my schedule">' +
-    starSVG(on) + '</button></div>';
+function saveCollapsed() { writeJSON(LS_COLLAPSED, COLLAPSED); }
+
+/* A group is collapsed if the user said so; otherwise fall back to its default.
+   Poster blocks default to collapsed -- 279 posters at one time would otherwise
+   bury the rest of the evening. */
+function isCollapsed(id, dflt) {
+  if (Object.prototype.hasOwnProperty.call(COLLAPSED, id)) return COLLAPSED[id];
+  return !!dflt;
 }
+function setCollapsed(id, val) { COLLAPSED[id] = !!val; }
+
+function setSort(mode) {
+  SORT = SORTS[mode] ? mode : 'time';
+  try { localStorage.setItem(LS_SORT, SORT); } catch (e) {}
+  render();
+}
+function toggleCollapse(id, dflt) {
+  setCollapsed(id, !isCollapsed(id, dflt));
+  saveCollapsed();
+  render();
+}
+/* "Collapse all" applies to what is currently on screen, so it is predictable:
+   if anything visible is expanded, collapse those; otherwise expand them. */
+function collapseAll() {
+  var nodes = document.querySelectorAll('[data-group]');
+  if (!nodes.length) return;
+  var anyOpen = Array.prototype.some.call(nodes, function (n) {
+    return n.dataset.collapsed !== '1';
+  });
+  Array.prototype.forEach.call(nodes, function (n) { setCollapsed(n.dataset.group, anyOpen); });
+  saveCollapsed();
+  render();
+}
+function syncCollapseBtn() {
+  var nodes = document.querySelectorAll('[data-group]');
+  var anyOpen = Array.prototype.some.call(nodes, function (n) {
+    return n.dataset.collapsed !== '1';
+  });
+  var b = el('btnCollapse');
+  b.textContent = anyOpen ? 'Collapse all' : 'Expand all';
+  b.setAttribute('aria-pressed', String(!anyOpen));
+  b.hidden = !nodes.length;
+}
+
+/* ---------- render: programme ---------- */
 function renderProgramme() {
   if (programmeLayout() === 'time') {
     renderProgrammeByTime();
     return;
   }
   var f = currentFilters();
-  var recs = programmeRecs(f);
-  var evts = programmeEvents(f);
+  var recs = TALKS.filter(function (r) {
+    if (DAY !== 'all' && r.session.date !== DAY) return false;
+    return matches(r, f);
+  });
 
-  if (!recs.length && (f.mine || f.notes || f.revisit || f.contact || !evts.length)) {
+  // Venue-wide items (registration, teas, lunches, socials) are context, not
+  // choices, so they only show when the user is not narrowing the list down.
+  var plain = !f.q && !f.room && !f.theme && !f.notes && !f.revisit && !f.contact && !f.hidePast;
+  var evts = plain ? DATA.events.filter(function (e) {
+    return DAY === 'all' || e.date === DAY;
+  }) : [];
+
+  if (!recs.length && (f.notes || f.revisit || f.contact || !evts.length)) {
     el('content').innerHTML = programmeEmptyHTML(f);
     return;
   }
+
+  var mode = sortMode(), SORTER = SORTS[mode];
+  if (SORTER.flat) { renderFlatTime(recs, evts, f); return; }
 
   // group by session, keep sessions ordered by (date, start, room)
   var map = new Map();
@@ -443,31 +476,35 @@ function renderProgramme() {
     if (!map.has(k)) map.set(k, { s: r.session, talks: [] });
     map.get(k).talks.push(r.talk);
   });
+
   var groups = Array.from(map.values()).sort(function (a, b) {
     return (a.s.date + a.s.start).localeCompare(b.s.date + b.s.start) ||
            mins(a.s.start) - mins(b.s.start) ||
            String(a.s.room).localeCompare(String(b.s.room));
   });
 
-  // group sessions into time blocks
+  // bucket sessions by the active sort key, preserving first-seen order
   var blocks = new Map();
   groups.forEach(function (g) {
-    var k = g.s.date + ' ' + g.s.start + '-' + g.s.end;
+    var k = SORTER.key(g.s);
     if (!blocks.has(k)) blocks.set(k, []);
     blocks.get(k).push(g);
   });
+  blocks.forEach(function (gs) { gs.sort(SORTER.within); });
 
-  // interleave session blocks and venue bands in true chronological order
   var entries = [];
   blocks.forEach(function (gs) {
     entries.push({ type: 'block', date: gs[0].s.date, start: gs[0].s.start, gs: gs });
   });
-  evts.forEach(function (e) {
-    entries.push({ type: 'event', date: e.date, start: e.start || '00:00', e: e });
-  });
-  entries.sort(function (a, b) {
-    return a.date.localeCompare(b.date) || mins(a.start) - mins(b.start);
-  });
+  // Venue bands are chronological context, so they only make sense in time order.
+  if (SORTER.bands) {
+    evts.forEach(function (e) {
+      entries.push({ type: 'event', date: e.date, start: e.start || '00:00', e: e });
+    });
+    entries.sort(function (a, b) {
+      return a.date.localeCompare(b.date) || mins(a.start) - mins(b.start);
+    });
+  }
 
   var shown = 0, capped = false, html = [];
   entries.forEach(function (en) {
@@ -475,39 +512,48 @@ function renderProgramme() {
     if (en.type === 'event') { html.push(bandHTML(en.e)); return; }
     var gs = en.gs, s0 = gs[0].s;
     var n = gs.reduce(function (a, g) { return a + g.talks.length; }, 0);
-    var dayLabel = DAY === 'all' ? (dayShort(s0.date) + ' &middot; ') : '';
-    html.push('<section class="block"><div class="block-head" role="button" tabindex="0" aria-label="Back to top">' +
-      '<span class="block-time">' + dayLabel + hhmm(s0.start) + ' – ' + hhmm(s0.end) + '</span>' +
+    html.push('<section class="block"><div class="block-head">' +
+      '<span class="block-time">' + SORTER.head(s0) + '</span>' +
       '<span class="block-line"></span><span class="block-n">' + n + ' talk' + (n === 1 ? '' : 's') + '</span>' +
       '</div><div class="grid">');
     gs.forEach(function (g) {
       if (capped) return;
       html.push(cardHTML(g, f));
-      shown += g.talks.length;
-      if (shown >= RENDER_CAP) capped = true;
+      // collapsed cards render no rows, so they cost nothing against the cap
+      if (!isCollapsed(g.s.id, false)) {
+        shown += g.talks.length;
+        if (shown >= RENDER_CAP) capped = true;
+      }
     });
     html.push('</div></section>');
   });
 
   if (capped) {
     html.push('<div class="note">Showing the first ' + shown + ' of ' + recs.length +
-      ' matching talks. Narrow the search, room, or day to see the rest.</div>');
+      ' matching talks. Narrow the search, or collapse sections, to see the rest.</div>');
   }
   el('content').innerHTML = html.join('');
+  syncCollapseBtn();
 }
 
 function renderProgrammeByTime() {
   var f = currentFilters();
-  var recs = programmeRecs(f).slice().sort(function (a, b) {
+  var recs = TALKS.filter(function (r) {
+    if (DAY !== 'all' && r.session.date !== DAY) return false;
+    return matches(r, f);
+  }).sort(function (a, b) {
     return a.session.date.localeCompare(b.session.date) ||
       mins(a.talk.start) - mins(b.talk.start) ||
       mins(a.talk.end) - mins(b.talk.end) ||
       String(a.session.room).localeCompare(String(b.session.room)) ||
       a.talk.title.localeCompare(b.talk.title);
   });
-  var evts = programmeEvents(f);
+  var plain = !f.q && !f.room && !f.theme && !f.notes && !f.revisit && !f.contact && !f.hidePast;
+  var evts = plain ? DATA.events.filter(function (e) {
+    return DAY === 'all' || e.date === DAY;
+  }) : [];
 
-  if (!recs.length && (f.mine || f.notes || f.revisit || f.contact || !evts.length)) {
+  if (!recs.length && (f.notes || f.revisit || f.contact || !evts.length)) {
     el('content').innerHTML = programmeEmptyHTML(f);
     return;
   }
@@ -534,10 +580,10 @@ function renderProgrammeByTime() {
     var slot = en.date + ' ' + en.r.talk.start;
     if (slot !== lastSlot) {
       lastSlot = slot;
-      var dayPrefix = DAY === 'all' ? dayShort(en.date) + ' · ' : '';
-      html.push('<div class="time-slot-head" role="button" tabindex="0" aria-label="Back to top">' + dayPrefix + hhmm(en.r.talk.start) + '</div>');
+      var dayPrefix = DAY === 'all' ? dayShort(en.date) + ' &middot; ' : '';
+      html.push('<div class="time-slot-head">' + dayPrefix + hhmm(en.r.talk.start) + '</div>');
     }
-    html.push(talkRowHTML(en.r, f, true));
+    html.push(talkRowHTML(en.r.talk, en.r.session, f, true));
     shown++;
     if (shown >= RENDER_CAP) capped = true;
   });
@@ -548,6 +594,87 @@ function renderProgrammeByTime() {
       ' matching talks. Narrow the search, room, or day to see the rest.</div>');
   }
   el('content').innerHTML = html.join('');
+}
+
+/* Time view: one group per distinct talk start time, so every talk beginning at
+   10:15 sits back to back regardless of room. Poster sessions are hundreds of
+   items at a single time, so they get their own clearly-labelled group that
+   starts collapsed. */
+function renderFlatTime(recs, evts, f) {
+  var buckets = new Map();
+  recs.forEach(function (r) {
+    var k = 't:' + r.session.date + ' ' + r.talk.start +
+            (r.session.kind === 'poster' ? ' p:' + r.session.id : '');
+    if (!buckets.has(k)) {
+      buckets.set(k, { id: k, date: r.session.date, start: r.talk.start,
+                       poster: r.session.kind === 'poster', session: r.session, rows: [] });
+    }
+    buckets.get(k).rows.push(r);
+  });
+
+  var entries = [];
+  buckets.forEach(function (b) {
+    b.rows.sort(function (x, y) {
+      return String(x.session.room).localeCompare(String(y.session.room)) ||
+             x.talk.title.localeCompare(y.talk.title);
+    });
+    entries.push({ type: 'group', date: b.date, start: b.start, g: b });
+  });
+  evts.forEach(function (e) {
+    entries.push({ type: 'event', date: e.date, start: e.start || '00:00', e: e });
+  });
+  entries.sort(function (a, b) {
+    return a.date.localeCompare(b.date) || mins(a.start) - mins(b.start);
+  });
+
+  var shown = 0, capped = false, html = [];
+  entries.forEach(function (en) {
+    if (capped) return;
+    if (en.type === 'event') { html.push(bandHTML(en.e)); return; }
+    var g = en.g;
+    var open = !isCollapsed(g.id, g.poster);   // posters default to collapsed
+    var n = g.rows.length;
+    var picked = 0, noted = 0;
+    g.rows.forEach(function (r) {
+      if (PICKS.has(r.talk.sid)) picked++;
+      if (hasNote(r.talk.sid)) noted++;
+    });
+    var word = g.poster ? (n === 1 ? 'poster' : 'posters') : (n === 1 ? 'talk' : 'talks');
+    var extra = [];
+    if (picked) extra.push('<b class="sum-pick">' + picked + ' picked</b>');
+    if (noted) extra.push('<b class="sum-note">' + noted + ' noted</b>');
+
+    html.push('<section class="tgroup' + (g.poster ? ' is-poster' : '') + '" data-group="' + esc(g.id) + '"' +
+      (open ? '' : ' data-collapsed="1"') + '>' +
+      '<div class="tgroup-head" data-collapse="' + esc(g.id) + '" data-default="' + (g.poster ? '1' : '') + '" ' +
+      'role="button" tabindex="0" aria-expanded="' + open + '" aria-label="' +
+      (open ? 'Collapse' : 'Expand') + ' ' + hhmm(g.start) + '">' +
+      '<span class="tgroup-time">' + (DAY === 'all' ? dayShort(g.date) + ' &middot; ' : '') + hhmm(g.start) + '</span>' +
+      (g.poster ? '<span class="tgroup-tag">' + esc(g.session.title) + '</span>' : '') +
+      '<span class="block-line"></span>' +
+      '<span class="tgroup-n">' + n + ' ' + word + (extra.length ? ' &middot; ' + extra.join(' &middot; ') : '') + '</span>' +
+      '<span class="chev" aria-hidden="true"><svg viewBox="0 0 24 24" width="16" height="16">' +
+      '<path fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" d="M6 9l6 6 6-6"/></svg></span>' +
+      '</div>');
+    if (open) {
+      html.push('<div class="tgroup-rows">');
+      g.rows.forEach(function (r) {
+        if (capped) return;
+        html.push(talkRowHTML(r.talk, r.session, f, true));
+        shown++;
+        if (shown >= RENDER_CAP) capped = true;
+      });
+      html.push('</div>');
+    }
+    html.push('</section>');
+  });
+
+  if (capped) {
+    html.push('<div class="note">Showing the first ' + shown + ' of ' + recs.length +
+      ' matching talks. Narrow the search, or collapse sections, to see the rest.</div>');
+  }
+  el('content').innerHTML = html.join('');
+  syncCollapseBtn();
 }
 
 function bandHTML(e) {
@@ -585,19 +712,66 @@ function cardHTML(g, f) {
   var allPast = talks.length
     ? talks.every(function (t) { return venueSlotEnded(s.date, t.end); })
     : venueSlotEnded(s.date, s.end);
+  var past = allPast;
   var code = s.code ? s.code : (s.kind === 'poster' ? 'POSTER' : s.kind === 'plenary' ? 'PLENARY' : 'EVENT');
   var themeTag = s.theme ? '#' + s.theme : '';
-  var out = ['<article class="card" data-kind="' + s.kind + '"><div class="card-head' + (allPast ? ' is-past' : '') + '" role="button" tabindex="0" aria-label="Back to top">' +
+  var open = !isCollapsed(s.id, false);
+
+  // When collapsed, surface what's inside so picks and notes are never hidden.
+  var picked = 0, noted = 0;
+  g.talks.forEach(function (t) {
+    if (PICKS.has(t.sid)) picked++;
+    if (hasNote(t.sid)) noted++;
+  });
+  var summary = [g.talks.length + ' talk' + (g.talks.length === 1 ? '' : 's')];
+  if (picked) summary.push('<b class="sum-pick">' + picked + ' picked</b>');
+  if (noted) summary.push('<b class="sum-note">' + noted + ' noted</b>');
+
+  var out = ['<article class="card' + (past ? ' is-past' : '') + '" data-kind="' + s.kind + '" data-sess="' + esc(s.id) + '"' +
+    ' data-group="' + esc(s.id) + '"' + (open ? '' : ' data-collapsed="1"') + '>' +
+    '<div class="card-head' + (allPast ? ' is-past' : '') + '" data-collapse="' + esc(s.id) + '" role="button" tabindex="0" ' +
+    'aria-expanded="' + open + '" aria-label="' + (open ? 'Collapse' : 'Expand') + ' session">' +
     '<span class="code">' + esc(code) + '</span><div style="min-width:0">' +
     '<h3 class="card-title">' + hi(s.title, f.q) + '</h3><div class="card-meta">' +
     (s.room ? '<span class="room">' + esc(roomLabel(s.room)) + (roomLevel(s.room) ? ' &middot; ' + esc(roomLevel(s.room)) : '') + '</span>' : '') +
     (themeTag ? '<span>' + themeTag + '</span>' : '') +
-    '</div></div></div>'];
-  talks.forEach(function (t) {
-    out.push(talkRowHTML({ talk: t, session: s }, f, false));
-  });
+    '<span class="card-sum">' + summary.join(' &middot; ') + '</span>' +
+    '</div></div>' +
+    '<span class="chev" aria-hidden="true"><svg viewBox="0 0 24 24" width="16" height="16">' +
+    '<path fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" d="M6 9l6 6 6-6"/></svg></span>' +
+    '</div>'];
+  if (!open) { out.push('</article>'); return out.join(''); }
+  g.talks.forEach(function (t) { out.push(talkRowHTML(t, s, f, false)); });
   out.push('</article>');
   return out.join('');
+}
+
+/* One row renderer for both views. The flat time list has no session card above
+   it, so it opts into showing the room + session code on the row itself. */
+function talkRowHTML(t, s, f, withWhere) {
+  var on = PICKS.has(t.sid);
+  var past = venueSlotEnded(s.date, t.end);
+  var where = '';
+  if (withWhere) {
+    var bits = [];
+    if (s.room) {
+      bits.push('<span class="row-room">' + esc(roomLabel(s.room)) +
+        (roomLevel(s.room) ? ' &middot; ' + esc(roomLevel(s.room)) : '') + '</span>');
+    }
+    if (s.code) bits.push('<span class="row-sess">' + esc(s.code) + (s.theme ? ' &middot; #' + s.theme : '') + '</span>');
+    else if (s.kind === 'poster') bits.push('<span class="row-sess">Poster</span>');
+    where = bits.length ? '<div class="t-where">' + bits.join('') + '</div>' : '';
+  }
+  return '<div class="talk' + (withWhere ? ' time-row' : '') + (on ? ' is-on' : '') + (past ? ' is-past' : '') + '" data-talk="' + t.sid +
+    '" tabindex="0" role="button" aria-label="Open details">' +
+    '<span class="t-time">' + hhmm(t.start) + '</span>' +
+    '<div class="t-body"><div class="t-title">' + hi(t.title, f.q) + '</div>' +
+    '<div class="t-who">' + hi((t.honorific ? t.honorific + ' ' : '') + t.presenter, f.q) +
+    (t.affiliation ? ' <span class="aff">&middot; ' + hi(t.affiliation, f.q) + '</span>' : '') +
+    '</div>' + where + noteBadgesHTML(t.sid) + '</div>' +
+    '<button class="star" data-sid="' + t.sid + '" aria-pressed="' + on + '" ' +
+    'aria-label="' + (on ? 'Remove from' : 'Add to') + ' my schedule" title="' + (on ? 'Remove from' : 'Add to') + ' my schedule">' +
+    starSVG(on) + '</button></div>';
 }
 function starSVG(on) {
   return '<svg viewBox="0 0 24 24" width="19" height="19">' +
@@ -664,6 +838,30 @@ function findClashes(list) {
   return clash;
 }
 
+function pickMineScrollTarget() {
+  var now = venueNow();
+  var list = myPicks();
+  if (!list.length) return null;
+  var today = list.filter(function (r) { return r.session.date === now.date; });
+  if (today.length) {
+    var next = today.find(function (r) {
+      return !venueSlotEnded(r.session.date, r.talk.end, now);
+    });
+    return (next || today[today.length - 1]).talk.sid;
+  }
+  var future = list.find(function (r) { return r.session.date >= now.date; });
+  if (future) return future.talk.sid;
+  return list[list.length - 1].talk.sid;
+}
+function scrollMineToCurrent() {
+  var sid = pickMineScrollTarget();
+  if (!sid) return;
+  requestAnimationFrame(function () {
+    var row = document.querySelector('.mine-row[data-talk="' + sid + '"]');
+    if (row) row.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  });
+}
+
 function renderMine() {
   var list = myPicks();
   if (!list.length) {
@@ -690,7 +888,8 @@ function renderMine() {
       if (gap >= 20) html.push('<p class="gap-note">' + gap + ' min gap</p>');
     }
     var c = clash.get(r.talk.sid);
-    html.push('<div class="mine-row' + (c ? ' clash' : '') + '" data-talk="' + r.talk.sid +
+    var past = venueSlotEnded(r.session.date, r.talk.end);
+    html.push('<div class="mine-row' + (past ? ' is-past' : '') + (c ? ' clash' : '') + '" data-talk="' + r.talk.sid +
       '" tabindex="0" role="button" aria-label="Open details">' +
       '<span class="m-time">' + hhmm(r.talk.start) + '–' + hhmm(r.talk.end) + '</span>' +
       '<div class="m-body"><div class="m-title">' + esc(r.talk.title) + '</div>' +
@@ -709,7 +908,7 @@ function renderMine() {
   el('content').innerHTML = html.join('');
 }
 
-/* ---------- render: up next (personal site) ---------- */
+/* ---------- render: up next ---------- */
 function venueNow() {
   var parts = {};
   new Intl.DateTimeFormat('en-CA', {
@@ -760,8 +959,8 @@ function renderUpNext() {
   var clock = hhmm(String(Math.floor(now.mins / 60)).padStart(2, '0') + ':' +
     String(now.mins % 60).padStart(2, '0'));
   var html = [
-    '<p class="upnext-lead">Auckland <b>' + esc(clock) + '</b> · ' + esc(day.label) +
-      ' · starred talks in the next ' + UP_NEXT_MINS + ' minutes</p>'
+    '<p class="upnext-lead">Auckland <b>' + esc(clock) + '</b> &middot; ' + esc(day.label) +
+      ' &middot; starred talks in the next ' + UP_NEXT_MINS + ' minutes</p>'
   ];
   if (!list.length) {
     html.push('<div class="empty"><h3>Clear for the next ' + UP_NEXT_MINS + ' minutes</h3>' +
@@ -798,29 +997,6 @@ function startUpNextTimer() {
   upNextTimer = setInterval(function () {
     if (VIEW === 'upnext') renderUpNext();
   }, 30000);
-}
-function updatePersonalUI() {
-  document.documentElement.classList.toggle('site-personal', CROSS_DEVICE_SYNC);
-  document.documentElement.classList.toggle('site-staging', STAGING_SITE);
-  if (CROSS_DEVICE_SYNC) {
-    var theme = document.querySelector('meta[name="theme-color"]');
-    if (theme) theme.content = '#3d2067';
-  }
-  var banner = el('stagingBanner');
-  if (banner) banner.hidden = !STAGING_SITE;
-  var tab = el('upnextTab');
-  if (tab) tab.hidden = !ENHANCED_UI;
-  updateProgLayoutUI();
-}
-function updateProgLayoutUI() {
-  var wrap = el('progLayoutWrap');
-  if (!wrap) return;
-  var layout = programmeLayout();
-  wrap.querySelectorAll('.prog-layout-btn').forEach(function (btn) {
-    var on = btn.dataset.layout === layout;
-    btn.classList.toggle('is-on', on);
-    btn.setAttribute('aria-pressed', on ? 'true' : 'false');
-  });
 }
 
 /* ---------- talk detail ---------- */
@@ -880,6 +1056,7 @@ function openTalk(sid) {
     '</div>' +
     '<textarea id="noteText" rows="4" maxlength="' + NOTE_MAX + '" ' +
     'placeholder="Your thoughts on this talk..."></textarea>' +
+    '<div class="note-actions"><button type="button" id="noteDone" class="btn note-done">Done</button></div>' +
     '<p class="note-hint"><b>Notes stay on this device.</b> They are lost if you clear browser data and are not sent via share links. Use <b>Notes (.md)</b> or <b>Backup</b> in My schedule to keep a copy.</p>' +
     '</div>');
   body.push('<div id="absWrap" class="abstract"><h3>Abstract</h3><div id="absText"></div></div>');
@@ -934,9 +1111,16 @@ function saveOpenNote() {
   var sid = OPEN_SID;
   var had = matchesNoteFilters(sid, currentFilters());
   var n = readNoteFromDialog();
-  persistNote(sid, n);
+  if (n.text || n.revisit || n.contact) NOTES[sid] = n;
+  else delete NOTES[sid];
+  saveNotes();
   patchNoteBadges(sid);
   if (noteFilterMatchChanged(sid, had)) render();
+}
+function finishNoteEntry() {
+  saveOpenNote();
+  var ta = el('noteText');
+  if (ta) ta.blur();
 }
 
 function toggleNoteTag(btn) {
@@ -945,8 +1129,9 @@ function toggleNoteTag(btn) {
   var had = matchesNoteFilters(OPEN_SID, currentFilters());
   var n = readNoteFromDialog();
   n[tag] = !n[tag];
-  if (n.text || n.revisit || n.contact) persistNote(OPEN_SID, n);
-  else persistNote(OPEN_SID, { text: '', revisit: false, contact: false });
+  if (n.text || n.revisit || n.contact) NOTES[OPEN_SID] = n;
+  else delete NOTES[OPEN_SID];
+  saveNotes();
   btn.classList.toggle('is-on', n[tag]);
   btn.setAttribute('aria-pressed', String(n[tag]));
   patchNoteBadges(OPEN_SID);
@@ -981,6 +1166,64 @@ function syncTalkStar() {
 }
 
 /* ---------- export & backup ---------- */
+
+/* Calendar export. Times in the programme are venue-local (Auckland, UTC+12 in
+   July); .ics carries UTC, so they are converted here rather than trusting the
+   viewer's timezone. */
+function icsTime(date, t) {
+  var dp = date.split('-').map(Number), tp = t.split(':').map(Number);
+  var ms = Date.UTC(dp[0], dp[1] - 1, dp[2], tp[0] - NZ_OFFSET, tp[1]);
+  var d = new Date(ms);
+  var p = function (n) { return String(n).padStart(2, '0'); };
+  return d.getUTCFullYear() + p(d.getUTCMonth() + 1) + p(d.getUTCDate()) + 'T' +
+         p(d.getUTCHours()) + p(d.getUTCMinutes()) + '00Z';
+}
+function icsEsc(s) {
+  return String(s == null ? '' : s).replace(/\\/g, '\\\\').replace(/;/g, '\\;')
+    .replace(/,/g, '\\,').replace(/\r?\n/g, '\\n');
+}
+function fold(line) {
+  var out = [], s = line;
+  while (s.length > 73) { out.push(s.slice(0, 73)); s = ' ' + s.slice(73); }
+  out.push(s);
+  return out.join('\r\n');
+}
+function buildICS() {
+  var list = myPicks();
+  if (!list.length) { toast('Pick some talks first.'); return null; }
+  var stamp = icsTime('2026-07-15', '12:00');
+  var L = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//ICRS 2026 Planner//EN',
+           'CALSCALE:GREGORIAN', 'METHOD:PUBLISH',
+           'X-WR-CALNAME:' + icsEsc('ICRS 2026 — ' + PROFILE)];
+  list.forEach(function (r) {
+    var loc = roomLabel(r.session.room) + (roomLevel(r.session.room) ? ', ' + roomLevel(r.session.room) : '') +
+              ', NZICC Auckland';
+    var note = getNote(r.talk.sid);
+    var desc = (r.talk.honorific ? r.talk.honorific + ' ' : '') + r.talk.presenter +
+      (r.talk.affiliation ? ' (' + r.talk.affiliation + ')' : '') +
+      (r.session.code ? '\nSession ' + r.session.code + ' — ' + r.session.title : '') +
+      ((r.talk.authors && r.talk.authors.length > 1) ? '\nAuthors: ' + r.talk.authors.join(', ') : '') +
+      (note.text ? '\n\nMy notes: ' + note.text : '');
+    L.push('BEGIN:VEVENT');
+    L.push('UID:' + r.talk.id + '@icrs2026-planner');
+    L.push('DTSTAMP:' + stamp);
+    L.push('DTSTART:' + icsTime(r.session.date, r.talk.start));
+    L.push('DTEND:' + icsTime(r.session.date, r.talk.end));
+    L.push(fold('SUMMARY:' + icsEsc(r.talk.title)));
+    L.push(fold('LOCATION:' + icsEsc(loc)));
+    L.push(fold('DESCRIPTION:' + icsEsc(desc)));
+    L.push('END:VEVENT');
+  });
+  L.push('END:VCALENDAR');
+  return L.join('\r\n');
+}
+function downloadICS() {
+  var txt = buildICS();
+  if (!txt) return;
+  downloadBlob('icrs2026-' + profileSlug() + '.ics', txt, 'text/calendar;charset=utf-8');
+  toast('Calendar file downloaded (' + PICKS.size + ' talks).');
+}
+
 function buildNotesMarkdown() {
   var list = notedTalks();
   if (!list.length) return null;
@@ -1038,38 +1281,6 @@ function downloadBackup() {
   downloadBlob('icrs2026-backup.json', JSON.stringify(buildBackup(), null, 2), 'application/json');
   toast('Backup saved (' + profs.length + ' profile' + (profs.length === 1 ? '' : 's') + ').');
 }
-function applyBackup(data, opts) {
-  opts = opts || {};
-  if (!data || data.v !== 1 || data.app !== 'icrs2026' || !Array.isArray(data.profiles)) {
-    if (!opts.silent) toast('That file is not a valid ICRS backup.');
-    return false;
-  }
-  var n = data.profiles.length;
-  if (!n) {
-    if (!opts.silent) toast('Backup has no profiles.');
-    return false;
-  }
-  var list = profiles();
-  data.profiles.forEach(function (name) {
-    if (list.indexOf(name) === -1) list.push(name);
-    var pickList = data.picks[name] || [];
-    writeJSON(LS_PICKS + name, pickList);
-    var meta = {};
-    pickList.forEach(function (sid) { meta[sid] = { on: true, at: Date.now() }; });
-    writeJSON(LS_PICKS_META + name, meta);
-    writeJSON(LS_NOTES + name, data.notes[name] || {});
-  });
-  saveProfiles(list);
-  if (data.current && list.indexOf(data.current) !== -1) setProfile(data.current);
-  else if (PROFILE && list.indexOf(PROFILE) !== -1) setProfile(PROFILE);
-  else setProfile(list[0]);
-  updateCount();
-  render();
-  if (!opts.silent) {
-    toast('Restored ' + n + ' profile' + (n === 1 ? '' : 's') + '.');
-  }
-  return true;
-}
 function restoreBackup(data) {
   if (!data || data.v !== 1 || data.app !== 'icrs2026' || !Array.isArray(data.profiles)) {
     toast('That file is not a valid ICRS backup.');
@@ -1079,319 +1290,34 @@ function restoreBackup(data) {
   if (!n) { toast('Backup has no profiles.'); return; }
   if (!confirm('Restore picks and notes for ' + n + ' profile' + (n === 1 ? '' : 's') +
       ' from this backup? Existing data for those names will be replaced.')) return;
-  applyBackup(data);
-  markSyncDirty();
+
+  var list = profiles();
+  data.profiles.forEach(function (name) {
+    if (list.indexOf(name) === -1) list.push(name);
+    writeJSON(LS_PICKS + name, data.picks[name] || []);
+    writeJSON(LS_NOTES + name, data.notes[name] || {});
+  });
+  saveProfiles(list);
+  if (data.current && list.indexOf(data.current) !== -1) setProfile(data.current);
+  else if (PROFILE && list.indexOf(PROFILE) !== -1) setProfile(PROFILE);
+  else setProfile(list[0]);
+  updateCount();
+  render();
+  if (typeof markSyncDirty === 'function') markSyncDirty();
+  toast('Restored ' + n + ' profile' + (n === 1 ? '' : 's') + '.');
 }
 function pickRestoreFile() {
   el('restoreFile').click();
 }
 
-/* ---------- share & cloud sync (orlando-code site) ---------- */
-function backupStats(data) {
-  if (!data || !Array.isArray(data.profiles)) return { picks: 0, notes: 0 };
-  var picks = 0, notes = 0;
-  data.profiles.forEach(function (p) {
-    picks += (data.picks[p] || []).length;
-    Object.keys(data.notes[p] || {}).forEach(function (sid) {
-      var n = data.notes[p][sid];
-      if (n && (n.text || n.revisit || n.contact)) notes++;
-    });
-  });
-  return { picks: picks, notes: notes };
-}
-function syncRoom() {
-  try { return (localStorage.getItem(LS_SYNC_ROOM) || '').toLowerCase().trim(); } catch (e) { return ''; }
-}
-function syncAt() {
-  try { return parseInt(localStorage.getItem(LS_SYNC_AT) || '0', 10) || 0; } catch (e) { return 0; }
-}
-function setSyncAt(at) {
-  try { localStorage.setItem(LS_SYNC_AT, String(at)); } catch (e) {}
-}
-function genSyncCode() {
-  var pick = function () { return SYNC_WORDS[Math.floor(Math.random() * SYNC_WORDS.length)]; };
-  return pick() + '-' + pick() + '-' + String(Math.floor(Math.random() * 9000) + 1000);
-}
-function normalizeSyncCode(raw) {
-  return String(raw || '').toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '').slice(0, 32);
-}
-function setSyncRoom(code, opts) {
-  opts = opts || {};
-  var room = normalizeSyncCode(code);
-  if (!room) return false;
-  try { localStorage.setItem(LS_SYNC_ROOM, room); } catch (e) { return false; }
-  syncCloudReady = false;
-  syncLocalDirty = false;
-  if (el('syncCodeInput')) el('syncCodeInput').value = room;
-  updateCloudSyncUI();
-  if (!opts.quiet) toast('Sync code set — loading from cloud…');
-  pullCloudSync(true);
-  return true;
-}
-function markSyncDirty() {
-  syncLocalDirty = true;
-  scheduleCloudPush();
-}
-function fetchCloudRoom(room) {
-  return fetch(SYNC_URL + '/' + encodeURIComponent(room), { cache: 'no-store' })
-    .then(function (r) {
-      if (r.status === 404) return null;
-      if (!r.ok) throw new Error('HTTP ' + r.status);
-      return r.json();
-    });
-}
-function upgradeSyncData(data, remoteAt) {
-  if (!data) return null;
-  if (data.v === 2) return data;
-  if (data.v !== 1 || data.app !== 'icrs2026' || !Array.isArray(data.profiles)) return null;
-  var at = remoteAt || 0;
-  var picksMeta = {}, notes = {};
-  data.profiles.forEach(function (p) {
-    picksMeta[p] = {};
-    (data.picks[p] || []).forEach(function (sid) {
-      picksMeta[p][sid] = { on: true, at: at };
-    });
-    notes[p] = {};
-    Object.keys(data.notes[p] || {}).forEach(function (sid) {
-      var n = data.notes[p][sid];
-      notes[p][sid] = {
-        text: n.text || '',
-        revisit: !!n.revisit,
-        contact: !!n.contact,
-        at: n.at || at
-      };
-    });
-  });
-  return {
-    v: 2,
-    app: 'icrs2026',
-    current: data.current,
-    profiles: data.profiles.slice(),
-    picks: data.picks,
-    picksMeta: picksMeta,
-    notes: notes
-  };
-}
-function mergePickMeta(localMeta, remoteMeta, remotePicks) {
-  localMeta = localMeta || {};
-  remoteMeta = remoteMeta || {};
-  if (!Object.keys(remoteMeta).length && remotePicks && remotePicks.length) {
-    remotePicks.forEach(function (sid) { remoteMeta[sid] = { on: true, at: 0 }; });
-  }
-  var merged = {}, sids = {}, pickList = [];
-  Object.keys(localMeta).forEach(function (sid) { sids[sid] = 1; });
-  Object.keys(remoteMeta).forEach(function (sid) { sids[sid] = 1; });
-  Object.keys(sids).forEach(function (sid) {
-    var l = localMeta[sid];
-    var r = remoteMeta[sid];
-    var winner;
-    if (!l) winner = r;
-    else if (!r) winner = l;
-    else winner = l.at >= r.at ? l : r;
-    if (!winner) return;
-    merged[sid] = winner;
-    if (winner.on) pickList.push(sid);
-  });
-  return { meta: merged, picks: pickList };
-}
-function mergeNoteMaps(localNotes, remoteNotes) {
-  localNotes = localNotes || {};
-  remoteNotes = remoteNotes || {};
-  var merged = {}, sids = {};
-  Object.keys(localNotes).forEach(function (sid) { sids[sid] = 1; });
-  Object.keys(remoteNotes).forEach(function (sid) { sids[sid] = 1; });
-  Object.keys(sids).forEach(function (sid) {
-    var l = localNotes[sid] || {};
-    var r = remoteNotes[sid] || {};
-    var lAt = parseInt(l.at, 10) || 0;
-    var rAt = parseInt(r.at, 10) || 0;
-    var w = lAt >= rAt ? l : r;
-    if (!w) return;
-    var n = {
-      text: String(w.text || '').slice(0, NOTE_MAX),
-      revisit: !!w.revisit,
-      contact: !!w.contact,
-      at: Math.max(lAt, rAt) || Date.now()
-    };
-    if (n.text || n.revisit || n.contact) merged[sid] = n;
-    else merged[sid] = { text: '', revisit: false, contact: false, at: n.at };
-  });
-  return merged;
-}
-function buildSyncPayload() {
-  var profs = profiles();
-  var picks = {}, picksMeta = {}, notes = {};
-  profs.forEach(function (n) {
-    picks[n] = readJSON(LS_PICKS + n, []);
-    picksMeta[n] = readJSON(LS_PICKS_META + n, {});
-    notes[n] = readJSON(LS_NOTES + n, {});
-  });
-  return {
-    v: 2,
-    app: 'icrs2026',
-    current: PROFILE,
-    profiles: profs,
-    picks: picks,
-    picksMeta: picksMeta,
-    notes: notes
-  };
-}
-function mergeSyncPayload(remote, opts) {
-  opts = opts || {};
-  if (!remote) return false;
-  var data = upgradeSyncData(remote.data || remote, remote.at);
-  if (!data) return false;
-
-  cloudBusy = true;
-  var localProfs = profiles();
-  var allProfs = localProfs.slice();
-  data.profiles.forEach(function (p) {
-    if (allProfs.indexOf(p) === -1) allProfs.push(p);
-  });
-  saveProfiles(allProfs);
-
-  allProfs.forEach(function (name) {
-    var picksMerged = mergePickMeta(
-      readJSON(LS_PICKS_META + name, {}),
-      data.picksMeta[name] || {},
-      data.picks[name] || []
-    );
-    writeJSON(LS_PICKS_META + name, picksMerged.meta);
-    writeJSON(LS_PICKS + name, picksMerged.picks);
-    writeJSON(LS_NOTES + name, mergeNoteMaps(readJSON(LS_NOTES + name, {}), data.notes[name] || {}));
-  });
-
-  if (data.current) {
-    try { localStorage.setItem(LS_CURRENT, data.current); } catch (e) {}
-  }
-  var who = PROFILE && allProfs.indexOf(PROFILE) !== -1 ? PROFILE : '';
-  if (!who && data.current && allProfs.indexOf(data.current) !== -1) who = data.current;
-  else if (!who && allProfs.length) who = allProfs[0];
-  if (who) setProfile(who);
-  else updateCount();
-  render();
-  setSyncAt(Math.max(syncAt(), remote.at || 0));
-  syncLocalDirty = false;
-  cloudBusy = false;
-  syncCloudReady = true;
-  updateCloudSyncUI();
-  if (opts.toast) toast('Synced — newest change on each item wins.');
-  return true;
-}
-function cloudPayload() {
-  return { at: Date.now(), data: buildSyncPayload() };
-}
-function scheduleCloudPush() {
-  if (!CLOUD_SYNC || !syncRoom() || cloudBusy || !syncCloudReady) return;
-  clearTimeout(cloudPushTimer);
-  cloudPushTimer = setTimeout(pushCloudSync, 1500);
-}
-function pushCloudSync() {
-  var room = syncRoom();
-  if (!room || !CLOUD_SYNC || cloudBusy || !syncCloudReady || !syncLocalDirty) return;
-  updateCloudSyncStatus('saving');
-  fetchCloudRoom(room)
-    .then(function (remote) {
-      if (remote) mergeSyncPayload(remote, { silent: true });
-      var payload = cloudPayload();
-      return fetch(SYNC_URL + '/' + encodeURIComponent(room), {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      }).then(function (r) {
-        if (r.ok) {
-          setSyncAt(payload.at);
-          syncLocalDirty = false;
-          updateCloudSyncUI();
-        } else updateCloudSyncStatus('error');
-      });
-    })
-    .catch(function () { updateCloudSyncStatus('offline'); });
-}
-function pullCloudSync(force) {
-  var room = syncRoom();
-  if (!room || !CLOUD_SYNC) return Promise.resolve(false);
-  if (!force && cloudBusy) return Promise.resolve(false);
-  updateCloudSyncStatus('pulling');
-  return fetchCloudRoom(room)
-    .then(function (remote) {
-      if (!remote) {
-        syncCloudReady = true;
-        if (force && syncLocalDirty) scheduleCloudPush();
-        updateCloudSyncUI();
-        return false;
-      }
-      var applied = mergeSyncPayload(remote, { toast: force });
-      if (!applied) updateCloudSyncUI();
-      return applied;
-    })
-    .catch(function () {
-      updateCloudSyncStatus('offline');
-      return false;
-    });
-}
-function startCloudSyncLoop() {
-  if (!CLOUD_SYNC) return;
-  clearInterval(cloudPullTimer);
-  cloudPullTimer = setInterval(function () {
-    if (document.visibilityState === 'visible' && syncRoom()) pullCloudSync(false);
-  }, 25000);
-  document.addEventListener('visibilitychange', function () {
-    if (document.visibilityState === 'visible' && syncRoom()) pullCloudSync(false);
-  });
-}
-function updateCloudSyncStatus(state) {
-  var elStatus = el('cloudSyncStatus');
-  if (!elStatus) return;
-  elStatus.dataset.state = state || '';
-  updateCloudSyncUI();
-}
-function updateCloudSyncUI() {
-  var panel = el('cloudSyncPanel');
-  var note = el('mineNote');
-  var elStatus = el('cloudSyncStatus');
-  if (!CROSS_DEVICE_SYNC) return;
-  if (panel) panel.hidden = false;
-  if (note) {
-    note.innerHTML = 'Picks and notes sync across devices with the same code. Each star or note keeps its own timestamp — <b>the newest change wins</b>, on any device.';
-  }
-  var input = el('syncCodeInput');
-  if (input && document.activeElement !== input) input.value = syncRoom();
-  var hint = el('cloudSyncHint');
-  if (hint) {
-    hint.textContent = SYNC_URL
-      ? 'Enter the same code on each device. Conflicts resolve by most recently edited pick or note — not by device.'
-      : 'Cloud sync needs a one-time worker deploy (see worker/deploy.sh), then set your worker URL in assets/sync-config.js.';
-  }
-  if (elStatus) {
-    var state = elStatus.dataset.state || (syncRoom() ? 'synced' : '');
-    var labels = {
-      synced: 'Up to date',
-      saving: 'Saving…',
-      pulling: 'Checking…',
-      offline: 'Offline',
-      error: 'Sync error'
-    };
-    var s = backupStats(buildBackup());
-    var extra = (s.picks || s.notes) ? ' · ' + s.picks + '★ ' + s.notes + ' notes' : '';
-    elStatus.textContent = (labels[state] || '') + extra;
-  }
-}
-function buildShareHash() {
-  if (!PROFILE) return '';
-  var parts = ['n=' + encodeURIComponent(PROFILE)];
-  if (PICKS.size) parts.push('s=' + Array.from(PICKS).join(''));
-  return parts.join('&');
-}
+/* ---------- share ---------- */
 function shareURL() {
-  if (!PROFILE) return siteURL();
-  var h = buildShareHash();
-  return location.origin + location.pathname + (h ? '#' + h : '');
+  var sids = myPicks().map(function (r) { return r.talk.sid; }).join('');
+  return location.origin + location.pathname + '#n=' + encodeURIComponent(PROFILE) + '&s=' + sids;
 }
 function copyShare() {
-  if (!PROFILE) { toast('Set up a profile first.'); return; }
-  if (!PICKS.size) { toast('Star a talk first.'); return; }
-  copyText(shareURL(), 'Share link copied — open on your other device for starred talks.');
+  if (!PICKS.size) { toast('Pick some talks first.'); return; }
+  copyText(shareURL(), 'Share link copied — open it on your phone.');
 }
 function siteURL() {
   return location.origin + location.pathname;
@@ -1406,11 +1332,6 @@ function copyText(url, okMsg) {
 }
 function copySiteLink() {
   copyText(siteURL(), 'Site link copied.');
-}
-function copySyncCode() {
-  var code = syncRoom();
-  if (!code) { toast('Enter or generate a sync code first.'); return; }
-  copyText(code, 'Sync code copied — paste it on your other device.');
 }
 var QR_LOAD = null;
 function loadQR() {
@@ -1427,10 +1348,9 @@ function loadQR() {
 }
 function renderShare() {
   var url = siteURL();
-  var lead = 'Scan this code to open the ICRS 2026 planner on another phone or laptop.';
   el('content').innerHTML =
     '<div class="qr-panel">' +
-      '<p class="qr-lead">' + lead + '</p>' +
+      '<p class="qr-lead">Scan this code to open the ICRS 2026 planner on another phone or laptop.</p>' +
       '<div class="qr-box" id="qrBox" aria-busy="true">Loading QR code…</div>' +
       '<p class="qr-url" id="qrUrl">' + esc(url) + '</p>' +
       '<button id="btnCopySite" class="btn" type="button">Copy link</button>' +
@@ -1451,45 +1371,33 @@ function renderShare() {
     el('qrBox').removeAttribute('aria-busy');
   });
 }
-function importFromHash(opts) {
-  opts = opts || {};
+function importFromHash() {
   var h = location.hash || '';
-  if (!h || h.length < 3) return false;
-
-  var ms = h.match(/[#&]s=([0-9a-fA-F]*)/);
-  var mn = h.match(/[#&]n=([^&]*)/);
-  if (!ms || !ms[1]) return false;
-
+  var ms = h.match(/[#&]s=([0-9a-fA-F]+)/);
+  if (!ms) return false;
   var name = '';
+  var mn = h.match(/[#&]n=([^&]*)/);
   if (mn) { try { name = decodeURIComponent(mn[1]); } catch (e) { name = ''; } }
-  var who = (name || PROFILE || 'Shared').slice(0, 40);
-  var valid = (ms[1].match(/.{1,8}/g) || []).filter(function (s) { return BY_SID.has(s); });
-  if (!valid.length) {
-    toast('That link had no talks we recognise.');
-    return false;
-  }
+  var sids = ms[1].match(/.{1,8}/g) || [];
+  var valid = sids.filter(function (s) { return BY_SID.has(s); });
+  history.replaceState(null, '', location.pathname + location.search);
+  if (!valid.length) { toast('That share link had no talks we recognise.'); return false; }
 
-  if (!opts.quiet) {
-    var msg = 'Import ' + valid.length + ' talk' + (valid.length === 1 ? '' : 's') +
-      ' into "' + who + '"?' +
-      (valid.length < (ms[1].match(/.{1,8}/g) || []).length
-        ? '\n\n(Some entries are not in the current programme and will be skipped.)' : '');
-    if (!window.confirm(msg)) return false;
-  }
+  var who = (name || 'Shared schedule').slice(0, 40);
+  var msg = 'Import ' + valid.length + ' talk' + (valid.length === 1 ? '' : 's') +
+    ' from a shared schedule into the profile "' + who + '"?' +
+    (valid.length < sids.length ? '\n\n(' + (sids.length - valid.length) +
+      ' entr' + (sids.length - valid.length === 1 ? 'y is' : 'ies are') +
+      ' not in the current programme and will be skipped.)' : '');
+  if (!window.confirm(msg)) return false;
 
   var list = profiles();
   if (list.indexOf(who) === -1) { list.push(who); saveProfiles(list); }
-  if (who !== PROFILE) setProfile(who);
+  setProfile(who);
   PICKS = new Set(valid);
-  writeJSON(LS_PICKS + PROFILE, Array.from(PICKS));
-  touchPickMetaMany(valid, true);
+  savePicks();
   updateCount();
-  history.replaceState(null, '', location.pathname + location.search);
-  markSyncDirty();
-
-  if (!opts.quiet) {
-    toast('Imported ' + valid.length + ' talk' + (valid.length === 1 ? '' : 's') + '.');
-  }
+  toast('Imported ' + valid.length + ' talks into "' + who + '".');
   return true;
 }
 
@@ -1524,7 +1432,7 @@ function saveProfileFromInput() {
   setProfile(name);
   el('profileDlg').close();
   render();
-  markSyncDirty();
+  // first-timers see the guide once, right after naming themselves
   setTimeout(maybeShowHelp, 80);
 }
 
@@ -1543,10 +1451,31 @@ function maybeShowHelp() {
   try { seen = localStorage.getItem(LS_HELP); } catch (e) {}
   if (!seen && !el('helpDlg').open && !el('profileDlg').open) openHelp();
 }
+
+/* ---------- storage notice ----------
+   Two different situations, deliberately handled differently:
+   - storage works: a one-time, dismissible heads-up about private browsing.
+   - storage is blocked: a permanent warning, because nothing can be saved at
+     all -- including the "dismissed" flag, so a one-time banner would be a lie. */
+function probeStorage() {
+  try {
+    localStorage.setItem('icrs2026.probe', '1');
+    localStorage.removeItem('icrs2026.probe');
+    return true;
+  } catch (e) { return false; }
+}
 function showNotice() {
   var box = el('notice');
-  if (!box) return;
-  box.style.display = '';
+  box.style.display = '';   // clear any inline hide from a previous dismissal
+  if (!STORAGE_OK) {
+    el('noticeMain').innerHTML = '<b>This browser is blocking storage.</b> Picks and notes cannot be ' +
+      'saved right now — they will vanish when you close this tab. Leaving private/incognito mode, ' +
+      'or allowing site data for this page, fixes it.';
+    box.classList.add('is-hard');
+    el('noticeClose').hidden = true;
+    box.hidden = false;
+    return;
+  }
   var seen;
   try { seen = localStorage.getItem(LS_NOTICE); } catch (e) {}
   if (seen) return;
@@ -1554,10 +1483,22 @@ function showNotice() {
 }
 function dismissNotice() {
   var box = el('notice');
-  if (!box) return;
   box.hidden = true;
+  // Belt and braces: an inline style beats any class rule, so dismissing works
+  // even if a stale cached stylesheet is in play -- which is exactly the case on
+  // a home-screen install still serving the previous version's CSS.
   box.style.display = 'none';
   try { localStorage.setItem(LS_NOTICE, '1'); } catch (e) {}
+}
+function updatePersonalUI() {
+  document.documentElement.classList.toggle('site-personal', PERSONAL_SITE);
+  document.documentElement.classList.toggle('site-staging', STAGING_SITE);
+  if (PERSONAL_SITE) {
+    var theme = document.querySelector('meta[name="theme-color"]');
+    if (theme) theme.content = '#3d2067';
+  }
+  var banner = el('stagingBanner');
+  if (banner) banner.hidden = !STAGING_SITE;
 }
 
 function renderProfileList() {
@@ -1587,17 +1528,14 @@ function render() {
   else renderProgramme();
 }
 function toggle(sid) {
-  var on = !PICKS.has(sid);
-  if (on) PICKS.add(sid); else PICKS.delete(sid);
-  touchPickMeta(sid, on);
+  if (PICKS.has(sid)) PICKS.delete(sid); else PICKS.add(sid);
   savePicks();
   updateCount();
 
   // A full re-render of a day is ~600 rows; doing that on every star tap feels
   // sluggish on a phone. Patch the affected rows in place instead, and only
   // re-render when the toggle actually changes which rows belong on screen.
-  if (VIEW === 'mine' || VIEW === 'upnext' || el('onlyMine').checked ||
-      (VIEW === 'programme' && programmeLayout() === 'time')) {
+  if (VIEW === 'mine' || VIEW === 'upnext' || (VIEW === 'programme' && programmeLayout() === 'time')) {
     render(); return;
   }
 
@@ -1670,6 +1608,7 @@ function setDay(d, opts) {
   render();
 }
 function setView(v) {
+  var was = VIEW;
   VIEW = v;
   Array.prototype.forEach.call(document.querySelectorAll('.view-tab'), function (b) {
     var on = b.dataset.view === v;
@@ -1682,6 +1621,7 @@ function setView(v) {
   else stopUpNextTimer();
   window.scrollTo(0, 0);
   render();
+  if (v === 'mine' && was !== 'mine') scrollMineToCurrent();
 }
 
 function wire() {
@@ -1691,6 +1631,9 @@ function wire() {
     if (star) { e.stopPropagation(); toggle(star.dataset.sid); return; }
     var row = e.target.closest('[data-talk]');
     if (row) { openTalk(row.dataset.talk); return; }
+    // collapse toggle sits on the card head, above the talk rows
+    var ch = e.target.closest('[data-collapse]');
+    if (ch) { toggleCollapse(ch.dataset.collapse, ch.dataset.default === '1'); return; }
     var scrollHead = e.target.closest('.block-head, .card-head, .time-slot-head, .brand');
     if (scrollHead) {
       window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -1724,11 +1667,23 @@ function wire() {
   // keyboard: talk rows behave like buttons
   document.addEventListener('keydown', function (e) {
     if (e.key !== 'Enter' && e.key !== ' ') return;
+    var ch = e.target.closest && e.target.closest('[data-collapse]');
+    if (ch) { e.preventDefault(); toggleCollapse(ch.dataset.collapse, ch.dataset.default === '1'); return; }
     var scrollHead = e.target.closest && e.target.closest('.block-head, .card-head, .time-slot-head, .brand');
     if (scrollHead) { e.preventDefault(); window.scrollTo({ top: 0, behavior: 'smooth' }); return; }
     var row = e.target.closest && e.target.closest('[data-talk]');
     if (row && !e.target.closest('.star')) { e.preventDefault(); openTalk(row.dataset.talk); }
   });
+  el('fSort').addEventListener('change', function () { setSort(el('fSort').value); });
+  var progLayout = el('progLayoutWrap');
+  if (progLayout) {
+    progLayout.addEventListener('click', function (e) {
+      var btn = e.target.closest('.prog-layout-btn');
+      if (btn) setProgrammeLayout(btn.dataset.layout);
+    });
+  }
+  el('btnCollapse').addEventListener('click', collapseAll);
+  el('noticeClose').addEventListener('click', dismissNotice);
   // how-to guide
   el('helpBtn').addEventListener('click', openHelp);
   el('helpClose').addEventListener('click', closeHelp);
@@ -1736,7 +1691,6 @@ function wire() {
   el('helpDlg').addEventListener('click', function (ev) {
     if (ev.target === el('helpDlg')) closeHelp();
   });
-  if (el('noticeClose')) el('noticeClose').addEventListener('click', dismissNotice);
 
   el('talkClose').addEventListener('click', closeTalk);
   el('talkDlg').addEventListener('close', function () { OPEN_SID = null; });
@@ -1747,7 +1701,11 @@ function wire() {
   });
   el('talkBody').addEventListener('click', function (ev) {
     var tagBtn = ev.target.closest('.note-tag-btn');
-    if (tagBtn) { ev.preventDefault(); toggleNoteTag(tagBtn); }
+    if (tagBtn) { ev.preventDefault(); toggleNoteTag(tagBtn); return; }
+    if (ev.target.closest('#noteDone')) {
+      ev.preventDefault();
+      finishNoteEntry();
+    }
   });
   var noteTimer;
   el('talkBody').addEventListener('input', function (ev) {
@@ -1792,7 +1750,6 @@ function wire() {
   });
   el('fRoom').addEventListener('change', render);
   el('fTheme').addEventListener('change', render);
-  el('onlyMine').addEventListener('change', render);
   el('onlyNotes').addEventListener('change', render);
   el('onlyRevisit').addEventListener('change', render);
   el('onlyContact').addEventListener('change', render);
@@ -1801,35 +1758,8 @@ function wire() {
     saveHidePast();
     render();
   });
-  var progLayout = el('progLayoutWrap');
-  if (progLayout) {
-    progLayout.addEventListener('click', function (e) {
-      var btn = e.target.closest('.prog-layout-btn');
-      if (btn) setProgrammeLayout(btn.dataset.layout);
-    });
-  }
   el('btnShare').addEventListener('click', copyShare);
-  if (el('syncCodeInput')) {
-    el('syncCodeInput').addEventListener('change', function () {
-      var code = normalizeSyncCode(el('syncCodeInput').value);
-      if (code) setSyncRoom(code);
-    });
-    el('syncCodeInput').addEventListener('keydown', function (ev) {
-      if (ev.key === 'Enter') { ev.preventDefault(); el('syncCodeInput').blur(); }
-    });
-  }
-  if (el('btnSyncGen')) {
-    el('btnSyncGen').addEventListener('click', function () {
-      if (syncRoom() && !confirm('Create a new sync code? Other devices will keep the old code until you update them.')) return;
-      setSyncRoom(genSyncCode());
-      markSyncDirty();
-    });
-  }
-  if (el('btnSyncCopy')) el('btnSyncCopy').addEventListener('click', copySyncCode);
-  if (el('btnSyncNow')) el('btnSyncNow').addEventListener('click', function () {
-    if (!syncRoom()) { toast('Enter or generate a sync code first.'); return; }
-    pullCloudSync(true);
-  });
+  el('btnIcs').addEventListener('click', downloadICS);
   el('btnNotesMd').addEventListener('click', downloadNotesMd);
   el('btnBackup').addEventListener('click', downloadBackup);
   el('btnRestore').addEventListener('click', pickRestoreFile);
@@ -1847,7 +1777,6 @@ function wire() {
   el('btnClear').addEventListener('click', function () {
     if (!PICKS.size) { toast('Nothing to clear.'); return; }
     if (confirm('Remove all ' + PICKS.size + ' picks from "' + PROFILE + '"?')) {
-      touchPickMetaMany(Array.from(PICKS), false);
       PICKS = new Set(); savePicks(); updateCount(); render(); toast('Picks cleared.');
     }
   });
@@ -1881,9 +1810,15 @@ function boot() {
       DATA = d;
       flatten();
       el('capturedAt').textContent = d.meta.capturedAt;
+      STORAGE_OK = probeStorage();
+      loadViewPrefs();
       buildFilters();
+      updateProgLayoutUI();
+      el('fSort').value = sortMode();
       wire();
       showNotice();
+      updatePersonalUI();
+      restoreHidePast();
 
       var list = profiles();
       var cur = '';
@@ -1892,10 +1827,6 @@ function boot() {
       else if (list.length) setProfile(list[0]);
 
       var imported = importFromHash();
-      updatePersonalUI();
-      updateCloudSyncUI();
-      startCloudSyncLoop();
-      if (CLOUD_SYNC && syncRoom()) pullCloudSync(true);
       applyInitialDay();
       setView('programme');
       if (!PROFILE && !imported) openProfile(true);
@@ -1916,9 +1847,24 @@ function boot() {
     });
 }
 
+/* Updating an installed (home-screen) app is the awkward case: it serves from
+   cache and has no address bar to force a reload, so a fix can sit unused for
+   several launches. The worker calls skipWaiting/claim, and when it takes over
+   we reload once so the new CSS/JS actually apply on this launch rather than the
+   next one. Picks and notes live in localStorage, so a reload costs nothing. */
 if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+  var swReloading = false;
+  navigator.serviceWorker.addEventListener('controllerchange', function () {
+    if (swReloading) return;
+    swReloading = true;
+    // only reload for a genuine version swap, not the very first install
+    if (navigator.serviceWorker.controller) location.reload();
+  });
   window.addEventListener('load', function () {
-    navigator.serviceWorker.register('sw.js').catch(function () {});
+    navigator.serviceWorker.register('sw.js').then(function (reg) {
+      reg.update();                      // check for a new version on every launch
+      setInterval(function () { reg.update(); }, 60 * 60 * 1000);
+    }).catch(function () {});
   });
 }
 window.addEventListener('pageshow', function () {
@@ -1926,7 +1872,6 @@ window.addEventListener('pageshow', function () {
     var d = pickInitialDay();
     if (d !== DAY) setDay(d);
   }
-  if (CLOUD_SYNC && syncRoom() && DATA) pullCloudSync(false);
 });
 el('content').innerHTML = '<div class="loading">Loading the programme…</div>';
 boot();

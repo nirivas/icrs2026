@@ -7,12 +7,18 @@
 <meta name="description" content="Browse all 1,480 talks at the 15th International Coral Reef Symposium and build your own schedule.">
 <meta name="theme-color" content="#0b3c49">
 <script src="assets/site-mode.js"></script>
-<script>if(window.ICRS_SITE_MODE==='personal'||window.ICRS_SITE_MODE==='staging')document.documentElement.classList.add('site-personal');</script>
+<script>
+if (window.ICRS_SITE_MODE === 'personal') {
+  document.documentElement.classList.add('site-personal');
+  var l = document.createElement('link');
+  l.rel = 'stylesheet'; l.href = 'assets/personal.css';
+  document.head.appendChild(l);
+}
+</script>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="assets/icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="assets/icon-180.png">
 <link rel="stylesheet" href="assets/styles.css">
-<link rel="stylesheet" href="assets/personal.css">
 </head>
 <body>
 
@@ -49,7 +55,7 @@
     <span class="tab-text"><span class="tab-long">My schedule</span><span class="tab-short">Schedule</span></span>
     <span class="count" id="pickCount">0</span>
   </button>
-  <button class="view-tab" id="upnextTab" data-view="upnext" role="tab" aria-selected="false" hidden>
+  <button class="view-tab" id="upnextTab" data-view="upnext" role="tab" aria-selected="false">
     <span class="tab-text"><span class="tab-long">Up next</span><span class="tab-short">Next</span></span>
   </button>
   <button class="view-tab" data-view="share" role="tab" aria-selected="false">Share</button>
@@ -63,7 +69,7 @@
   <div id="notice" class="notice" role="status" hidden>
     <span class="notice-icon" aria-hidden="true">🔒</span>
     <div class="notice-body">
-      <p id="noticeMain"><b>Don&rsquo;t use private / incognito mode.</b> Your picks and notes are saved in
+      <p id="noticeMain"><b>Don't use private / incognito mode.</b> Your picks and notes are saved in
         this browser, and a private window throws them away when you close it.</p>
       <p class="notice-thanks">Notes, tags and backup contributed by <b>Orlando Timmerman, PhD Candidate</b> — thank you! 🪸</p>
     </div>
@@ -85,10 +91,16 @@
       <select id="fRoom" aria-label="Filter by room"><option value="">All rooms</option></select>
       <select id="fTheme" aria-label="Filter by theme"><option value="">All themes</option></select>
     </div>
+    <div class="controls-row">
+      <select id="fSort" aria-label="Sort by">
+        <option value="time">Sort: Time</option>
+        <option value="room">Sort: Room</option>
+        <option value="session">Sort: Session</option>
+        <option value="topic">Sort: Topic</option>
+      </select>
+      <button id="btnCollapse" class="btn btn-collapse" type="button" aria-pressed="false">Collapse all</button>
+    </div>
     <div class="filter-checks" role="group" aria-label="Talk filters">
-      <label class="filter-check">
-        <input type="checkbox" id="onlyMine"> <span>My picks</span>
-      </label>
       <label class="filter-check">
         <input type="checkbox" id="onlyNotes"> <span>Notes</span>
       </label>
@@ -124,6 +136,7 @@
   </div>
   <div class="mine-bar">
     <button id="btnShare" class="btn" type="button">Copy share link</button>
+    <button id="btnIcs" class="btn" type="button">Add to calendar (.ics)</button>
     <button id="btnNotesMd" class="btn" type="button">Notes (.md)</button>
     <button id="btnBackup" class="btn" type="button">Backup</button>
     <button id="btnRestore" class="btn btn-quiet" type="button">Restore</button>
@@ -195,6 +208,8 @@
 
       <h3 class="help-h">Handy extras</h3>
       <ul class="help-tips">
+        <li><span class="ti">↕️</span><div><b>Sort and collapse.</b> Use <b>Sort</b> to group the day by time, room, session or topic. Tap any session header to fold it away, or <b>Collapse all</b> to see just the headers — collapsed sessions still show how many talks you've picked or noted inside.</div></li>
+        <li><span class="ti">📅</span><div><b>Add to your calendar.</b> In My schedule, <b>Add to calendar (.ics)</b> downloads your picks with times, rooms and your notes.</div></li>
         <li><span class="ti">🔗</span><div><b>Share your schedule.</b> <b>Copy share link</b> moves starred talks to another device. <b>Notes are not included</b> &mdash; use Backup or Notes (.md) instead.</div></li>
         <li><span class="ti">📝</span><div><b>Take notes.</b> Add notes and <b>Revisit</b> / <b>Contact</b> tags in any talk. Notes stay on this device and <b>disappear if you clear browser data</b>. Export or back them up from My schedule.</div></li>
         <li><span class="ti">💾</span><div><b>Back up your data.</b> <b>Backup</b> saves picks and notes for every profile. <b>Restore</b> on the same site address (e.g. the GitHub Pages URL) to recover them on another device.</div></li>
@@ -243,7 +258,18 @@
 
 <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
-<script src="assets/sync-config.js"></script>
 <script src="assets/app.js"></script>
+<script>
+(function () {
+  if (window.ICRS_SITE_MODE !== 'personal') return;
+  function load(src, next) {
+    var s = document.createElement('script');
+    s.src = src;
+    s.onload = next || function () {};
+    document.body.appendChild(s);
+  }
+  load('assets/sync-config.js', function () { load('assets/personal-sync.js'); });
+})();
+</script>
 </body>
 </html>

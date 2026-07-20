@@ -2,8 +2,9 @@
 
 **https://orlando-code.github.io/icrs2026-staging/**
 
-Combined preview of Nico's site plus Orlando's features (Up next, By time,
-hide finished talks, cloud sync, notes, mobile fixes).
+Built from **Nico's live site** (`nirivas/icrs2026`) plus Orlando's test features
+(hide finished talks, Auckland today default, schedule scroll, etc.). Staging banner
+only — no purple theme, no cloud sync.
 
 ## Push updates
 
@@ -11,28 +12,21 @@ hide finished talks, cloud sync, notes, mobile fixes).
 git push staging feature/talk-notes:main
 ```
 
-Wait ~1 minute for GitHub Pages to rebuild.
+## Data safety
 
-## One-time GitHub Pages setup
+Deploys **never wipe** picks or notes:
 
-If the URL returns 404, enable Pages in **icrs2026-staging → Settings → Pages**
-(deploy from branch `main` / root), or:
+- Storage keys are unchanged (`icrs2026.profiles`, `icrs2026.picks.*`, `icrs2026.notes.*`)
+- Service worker cache bumps only refresh static files, not `localStorage`
+- Cloud sync is **not loaded** on staging or Nico's live site
+- `saveNotes()` merges into existing storage instead of replacing the whole object
 
-```bash
-gh api --method POST repos/orlando-code/icrs2026-staging/pages \
-  -f build_type=legacy \
-  -f 'source[branch]=main' \
-  -f 'source[path]=/'
-```
-
-Note: quote the `source[...]` fields in zsh.
+Users on staging (separate origin from `nirivas.github.io`) have their own browser storage.
 
 ## Sites
 
 | Site | URL |
 |------|-----|
-| Orlando (production) | https://orlando-code.github.io/icrs2026/ |
 | Nico (production) | https://nirivas.github.io/icrs2026/ |
+| Orlando (personal) | https://orlando-code.github.io/icrs2026/ |
 | Staging preview | https://orlando-code.github.io/icrs2026-staging/ |
-
-Bump `CACHE` in `sw.js` when you need installed PWA users to pick up CSS/JS changes.
