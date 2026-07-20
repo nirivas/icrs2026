@@ -13,6 +13,9 @@
   }
 }
 *{box-sizing:border-box}
+/* Any class that sets `display` would otherwise beat the browser's built-in
+   [hidden]{display:none}, leaving "hidden" elements on screen. */
+[hidden]{display:none!important}
 html,body{margin:0}
 body{
   background:var(--bg); color:var(--ink);
@@ -48,6 +51,64 @@ a{color:var(--teal)}
   display:grid;place-items:center;line-height:0;
 }
 .round-btn:hover{background:rgba(255,255,255,.28)}
+a.round-btn{text-decoration:none}
+.cv-text{font-size:11px;font-weight:800;letter-spacing:.5px;line-height:1}
+
+/* flat time view: groups of talks that start at the same minute */
+.tgroup{margin:14px 0 8px}
+.tgroup-head{
+  display:flex;align-items:center;gap:9px;margin:0 0 8px;padding:5px 0;cursor:pointer;
+  position:sticky;top:calc(50px + env(safe-area-inset-top));z-index:10;background:var(--bg);
+}
+.tgroup-head:hover .tgroup-time{color:var(--teal-2)}
+.tgroup-head:focus-visible{outline:2px solid var(--teal-2);outline-offset:2px;border-radius:6px}
+.tgroup-time{font-weight:800;font-size:14px;color:var(--teal);white-space:nowrap;font-variant-numeric:tabular-nums}
+.tgroup-tag{
+  font-size:11px;font-weight:700;color:#fff;background:var(--sun);
+  border-radius:999px;padding:2px 9px;white-space:nowrap;
+}
+.tgroup-n{font-size:11px;color:var(--ink-3);white-space:nowrap}
+.tgroup-rows{
+  display:flex;flex-direction:column;background:var(--panel);
+  border:1px solid var(--line);border-radius:var(--r);box-shadow:var(--shadow);overflow:hidden;
+}
+.tgroup[data-collapsed] .chev{transform:rotate(-90deg)}
+.tgroup.is-poster .tgroup-time{color:var(--sun)}
+/* room + session on the row itself, since there is no card header above it */
+.t-where{display:flex;gap:6px;flex-wrap:wrap;margin-top:4px}
+.row-room{
+  background:var(--bg);border:1px solid var(--line);border-radius:5px;
+  padding:1px 6px;font-size:10.5px;font-weight:700;color:var(--ink-2);
+}
+.row-sess{font-size:10.5px;font-weight:600;color:var(--ink-3);padding-top:1px}
+
+/* storage / incognito notice */
+.notice{
+  display:flex;align-items:flex-start;gap:10px;margin:10px 0 0;padding:10px 12px;
+  border-radius:var(--r);font-size:12.5px;line-height:1.45;color:var(--ink-2);
+  background:color-mix(in srgb,var(--sun) 12%,var(--panel));
+  border:1px solid color-mix(in srgb,var(--sun) 38%,transparent);
+}
+.notice-icon{flex:none;font-size:16px;line-height:1.3}
+.notice-body{flex:1;min-width:0}
+.notice-body p{margin:0}
+.notice-body b{color:var(--ink)}
+.notice-thanks{margin-top:5px!important;color:var(--ink-3);font-size:11.5px}
+/* 44x44 hit area (the glyph stays small) -- at 19px this was easy to miss on a
+   phone, which read as "the X is broken". Negative margin keeps the layout tight. */
+.notice-x{
+  flex:none;border:0;background:transparent;color:var(--ink-3);cursor:pointer;
+  font-size:20px;line-height:1;border-radius:10px;
+  width:44px;height:44px;display:grid;place-items:center;
+  margin:-8px -8px -8px 0;-webkit-tap-highlight-color:transparent;
+}
+.notice-x:hover{color:var(--coral);background:color-mix(in srgb,var(--coral) 12%,transparent)}
+.notice-x:active{background:color-mix(in srgb,var(--coral) 22%,transparent);transform:scale(.92)}
+.notice-x:focus-visible{outline:2px solid var(--teal-2);outline-offset:-2px}
+.notice.is-hard{
+  background:color-mix(in srgb,var(--coral) 12%,var(--panel));
+  border-color:color-mix(in srgb,var(--coral) 40%,transparent);
+}
 .profile-chip>span:last-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .avatar{
   width:24px;height:24px;border-radius:50%;background:var(--coral);color:#fff;
@@ -55,42 +116,68 @@ a{color:var(--teal)}
 }
 
 /* view tabs */
-.views{display:flex;gap:6px;padding-top:10px;padding-bottom:2px}
+.views{display:flex;gap:4px;padding-top:10px;padding-bottom:2px}
 .view-tab{
-  flex:1; background:transparent; border:0; border-bottom:2px solid transparent;
-  padding:9px 6px; font:inherit; font-weight:600; color:var(--ink-2); cursor:pointer;
-  display:flex;align-items:center;justify-content:center;gap:7px;
+  flex:1;min-width:0;background:transparent;border:0;border-bottom:2px solid transparent;
+  padding:9px 4px;font:inherit;font-size:13px;font-weight:600;color:var(--ink-2);cursor:pointer;
+  display:flex;align-items:center;justify-content:center;gap:5px;line-height:1.2;
 }
 .view-tab.is-on{color:var(--teal);border-bottom-color:var(--teal)}
+.tab-text{display:inline-flex;align-items:center;min-width:0}
+.tab-short{display:none}
 .count{
-  background:var(--coral);color:#fff;border-radius:999px;
-  min-width:19px;padding:1px 5px;font-size:11px;font-weight:700;
+  flex:none;background:var(--coral);color:#fff;border-radius:999px;
+  min-width:19px;padding:1px 6px;font-size:11px;font-weight:700;line-height:1.35;
+  font-variant-numeric:tabular-nums;
 }
 .count[data-zero="1"]{background:var(--ink-3)}
+@media(max-width:420px){
+  .view-tab{font-size:12px;padding:8px 2px;gap:4px}
+  .tab-long{display:none}
+  .tab-short{display:inline}
+}
 
 /* controls */
-.controls{display:flex;gap:8px;flex-wrap:wrap;padding:10px 0 8px}
+.controls{display:flex;flex-direction:column;gap:8px;padding:10px 0 8px}
+.controls-row{display:flex;gap:8px;flex-wrap:wrap}
 .search-wrap{position:relative;flex:1 1 100%;min-width:0}
 .search-icon{position:absolute;left:11px;top:50%;transform:translateY(-50%);color:var(--ink-3);pointer-events:none}
 #q{
   width:100%;padding:10px 34px;border:1px solid var(--line);border-radius:var(--r);
   background:var(--panel);color:var(--ink);font:inherit;
 }
-#q:focus,select:focus{outline:2px solid var(--teal-2);outline-offset:1px}
+#q:focus,select:focus,.filter-check:focus-within{outline:2px solid var(--teal-2);outline-offset:1px}
 .q-clear{
   position:absolute;right:6px;top:50%;transform:translateY(-50%);
   border:0;background:transparent;color:var(--ink-3);font-size:20px;cursor:pointer;padding:0 6px;line-height:1;
 }
+select,.filter-check{
+  min-height:38px;box-sizing:border-box;border:1px solid var(--line);border-radius:var(--r);
+  background:var(--panel);color:var(--ink);font:inherit;font-size:13px;
+}
 select{
-  flex:1 1 150px;padding:9px 10px;border:1px solid var(--line);border-radius:var(--r);
-  background:var(--panel);color:var(--ink);font:inherit;min-width:0;
+  flex:1 1 140px;padding:8px 10px;min-width:0;
 }
-.only-mine{
-  display:flex;align-items:center;gap:7px;padding:0 10px;
-  border:1px solid var(--line);border-radius:var(--r);background:var(--panel);
-  font-size:13px;color:var(--ink-2);cursor:pointer;flex:0 0 auto;
+.filter-checks{display:flex;gap:8px;flex-wrap:wrap;width:100%}
+.filter-check{
+  display:inline-flex;align-items:center;justify-content:center;gap:7px;
+  padding:0 9px;color:var(--ink-2);cursor:pointer;flex:1 1 0;min-width:0;
+  user-select:none;white-space:nowrap;font-size:12.5px;
 }
-.only-mine input{accent-color:var(--teal)}
+.filter-check:has(:checked){
+  border-color:var(--teal);color:var(--teal);
+  background:color-mix(in srgb,var(--teal) 8%,var(--panel));
+}
+.filter-check input{
+  accent-color:var(--teal);width:15px;height:15px;margin:0;flex:none;
+}
+@media(min-width:560px){
+  .filter-check{flex:1 1 0;max-width:none}
+}
+@media(min-width:760px){
+  .controls-row select{flex:1 1 180px}
+  .filter-check{flex:0 1 auto}
+}
 
 /* day tabs */
 .days{display:flex;gap:6px;overflow-x:auto;padding:2px 0 10px;scrollbar-width:none}
@@ -137,7 +224,18 @@ select{
   background:var(--panel);border:1px solid var(--line);border-radius:var(--r);
   box-shadow:var(--shadow);overflow:hidden;
 }
-.card-head{display:flex;gap:9px;padding:10px 11px;align-items:flex-start;border-bottom:1px solid var(--line)}
+.card-head{display:flex;gap:9px;padding:10px 11px;align-items:flex-start;border-bottom:1px solid var(--line);cursor:pointer}
+.card-head:hover{background:color-mix(in srgb,var(--teal) 4%,transparent)}
+.card-head:focus-visible{outline:2px solid var(--teal-2);outline-offset:-2px}
+.chev{flex:none;color:var(--ink-3);line-height:0;padding-top:2px;transition:transform .15s}
+.card[data-collapsed] .card-head{border-bottom:0}
+.card[data-collapsed] .chev{transform:rotate(-90deg)}
+.card-sum{color:var(--ink-3)}
+.card-sum .sum-pick{color:var(--coral);font-weight:700}
+.card-sum .sum-note{color:var(--teal);font-weight:700}
+/* the summary is only worth showing when the rows are hidden */
+.card:not([data-collapsed]) .card-sum{display:none}
+.btn-collapse{flex:0 0 auto;white-space:nowrap}
 .code{
   flex:none;background:var(--deep);color:#fff;border-radius:7px;
   padding:3px 7px;font-size:11px;font-weight:700;letter-spacing:.4px;
@@ -167,7 +265,13 @@ select{
 mark{background:color-mix(in srgb,var(--sun) 45%,transparent);color:inherit;border-radius:3px;padding:0 1px}
 
 /* my schedule */
-.mine-bar{display:flex;gap:8px;flex-wrap:wrap;padding:10px 0}
+.mine-note{
+  margin:10px 0 0;font-size:12px;line-height:1.45;color:var(--ink-2);
+  background:color-mix(in srgb,var(--sun) 10%,transparent);
+  border:1px solid color-mix(in srgb,var(--sun) 30%,transparent);
+  border-radius:var(--r);padding:8px 11px;
+}
+.mine-bar{display:flex;gap:8px;flex-wrap:wrap;padding:8px 0 10px}
 .btn{
   border:1px solid var(--line);background:var(--panel);color:var(--ink);
   border-radius:var(--r);padding:8px 13px;font:inherit;font-size:13px;font-weight:600;cursor:pointer;
@@ -189,6 +293,13 @@ mark{background:color-mix(in srgb,var(--sun) 45%,transparent);color:inherit;bord
 }
 .mine-row.clash{border-color:var(--coral);border-left-width:3px}
 .m-time{flex:none;width:96px;font-size:11.5px;font-weight:700;color:var(--teal);font-variant-numeric:tabular-nums}
+/* on a phone a 96px time column plus a 106px indent eats the row, so stack instead */
+@media(max-width:460px){
+  .mine-row{gap:8px}
+  .m-time{width:auto;min-width:74px;font-size:11px}
+  .gap-note{margin-left:0;text-align:center}
+  .mine-bar .btn{flex:1 1 calc(50% - 4px);text-align:center}
+}
 .m-body{flex:1;min-width:0}
 .m-title{font-size:13.5px;font-weight:600;line-height:1.35}
 .m-meta{font-size:11.5px;color:var(--ink-2);margin-top:3px}
@@ -269,6 +380,32 @@ mark{background:color-mix(in srgb,var(--sun) 45%,transparent);color:inherit;bord
 .abstract h3{margin:0 0 7px;font-size:12px;text-transform:uppercase;letter-spacing:.6px;color:var(--teal)}
 .abstract p{margin:0 0 9px;font-size:13.5px;line-height:1.62;max-width:62ch}
 .abstract em{font-style:italic}
+.my-notes{border-top:1px solid var(--line);margin-top:12px;padding-top:11px}
+.my-notes h3{margin:0 0 8px;font-size:12px;text-transform:uppercase;letter-spacing:.6px;color:var(--teal)}
+.note-tags{display:flex;gap:7px;flex-wrap:wrap;margin-bottom:8px}
+.note-tag-btn{
+  border:1px solid var(--line);background:var(--bg);color:var(--ink-2);
+  border-radius:999px;padding:5px 11px;font:inherit;font-size:12px;font-weight:600;cursor:pointer;
+}
+.note-tag-btn:hover{border-color:var(--teal);color:var(--teal)}
+.note-tag-btn.is-on{background:var(--teal);border-color:var(--teal);color:#fff}
+.note-tag-btn.is-on[data-tag="revisit"]{background:var(--sun);border-color:var(--sun);color:#fff}
+.note-tag-btn.is-on[data-tag="contact"]{background:var(--coral);border-color:var(--coral);color:#fff}
+#noteText{
+  width:100%;padding:10px 11px;border:1px solid var(--line);border-radius:var(--r);
+  background:var(--bg);color:var(--ink);font:inherit;font-size:13.5px;line-height:1.45;
+  resize:vertical;min-height:88px;
+}
+#noteText:focus{outline:2px solid var(--teal-2);outline-offset:1px}
+.note-hint{margin:7px 0 0;font-size:11px;color:var(--ink-3)}
+.note-badges{display:flex;gap:5px;flex-wrap:wrap;margin-top:4px}
+.note-tag{
+  display:inline-block;border-radius:999px;padding:1px 7px;font-size:10px;font-weight:700;
+  letter-spacing:.2px;text-transform:lowercase;
+}
+.note-tag.revisit{background:color-mix(in srgb,var(--sun) 18%,transparent);color:var(--sun)}
+.note-tag.contact{background:color-mix(in srgb,var(--coral) 16%,transparent);color:var(--coral)}
+.note-tag.has-note{background:color-mix(in srgb,var(--teal) 14%,transparent);color:var(--teal)}
 .talk-dlg-foot{padding:11px 15px;border-top:1px solid var(--line);background:var(--bg)}
 .talk-dlg-foot .btn{display:flex;align-items:center;justify-content:center;gap:7px;width:100%}
 .talk-dlg-foot .btn[aria-pressed="true"]{color:var(--coral);border-color:var(--coral)}

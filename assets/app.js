@@ -10,6 +10,7 @@ var ABSTRACTS = null;        // sid -> text; lazily fetched (~3.9 MB)
 var ABSTRACTS_STATE = 'idle'; // idle | loading | ready | failed
 var OPEN_SID = null;         // talk currently shown in the detail dialog
 var PICKS = new Set();
+var NOTES = {};              // sid -> { text, revisit, contact }
 var PROFILE = '';
 var VIEW = 'programme';
 var DAY = null;
@@ -18,9 +19,25 @@ var RENDER_CAP = 600;
 var LS_PROFILES = 'icrs2026.profiles';
 var LS_CURRENT = 'icrs2026.current';
 var LS_PICKS = 'icrs2026.picks.';
+var LS_NOTES = 'icrs2026.notes.';
 var LS_HELP = 'icrs2026.helpSeen';
+// View-only preferences. Deliberately separate keys from picks/notes so that
+// changing how the programme is displayed can never touch saved data.
+var LS_SORT = 'icrs2026.sort';
+var LS_COLLAPSED = 'icrs2026.collapsed';
+var LS_NOTICE = 'icrs2026.noticeSeen';
 var NZ_OFFSET = 12;          // Auckland is UTC+12 (NZST) for 19-24 July 2026
-
+var SORT = 'time';
+/* Explicit user collapse choices only: { id: true|false }. An id that is absent
+   means "use the default for this group" -- which lets poster blocks start
+   collapsed while ordinary sessions start open, without the two states fighting. */
+var COLLAPSED = {};
+var STORAGE_OK = true;
+var NOTE_MAX = 4000;
+var NOTE_TAGS = [
+  { id: 'revisit', label: 'Revisit' },
+  { id: 'contact', label: 'Contact' }
+];
 var $ = function (s) { return document.querySelector(s); };
 var el = function (s) { return document.getElementById(s); };
 
@@ -102,10 +119,125 @@ function savePicks() {
   if (!PROFILE) return;
   writeJSON(LS_PICKS + PROFILE, Array.from(PICKS));
 }
+function loadNotes(name) {
+  var raw = readJSON(LS_NOTES + name, {});
+  var out = {};
+  Object.keys(raw).forEach(function (sid) {
+    var n = raw[sid];
+    if (!n || typeof n !== 'object') return;
+    out[sid] = {
+      text: String(n.text || '').slice(0, NOTE_MAX),
+      revisit: !!n.revisit,
+      contact: !!n.contact
+    };
+    if (!out[sid].text && !out[sid].revisit && !out[sid].contact) delete out[sid];
+  });
+  return out;
+}
+function saveNotes() {
+  if (!PROFILE) return;
+  var out = {};
+  Object.keys(NOTES).forEach(function (sid) {
+    var n = NOTES[sid];
+    if (!n) return;
+    if (n.text || n.revisit || n.contact) out[sid] = n;
+  });
+  writeJSON(LS_NOTES + PROFILE, out);
+}
+function getNote(sid) {
+  var n = NOTES[sid];
+  if (!n) return { text: '', revisit: false, contact: false };
+  return { text: n.text || '', revisit: !!n.revisit, contact: !!n.contact };
+}
+function hasNote(sid) {
+  var n = getNote(sid);
+  return !!(n.text || n.revisit || n.contact);
+}
+function noteFiltersActive() {
+  return el('onlyNotes').checked || el('onlyRevisit').checked || el('onlyContact').checked;
+}
+function matchesNoteFilters(sid, f) {
+  if (!f.notes && !f.revisit && !f.contact) return true;
+  var n = getNote(sid);
+  if (f.notes && n.text) return true;
+  if (f.revisit && n.revisit) return true;
+  if (f.contact && n.contact) return true;
+  return false;
+}
+function noteFilterEmptyHTML(f) {
+  var nf = { notes: f.notes, revisit: f.revisit, contact: f.contact };
+  var global = 0;
+  TALKS.forEach(function (r) {
+    if (matchesNoteFilters(r.talk.sid, nf)) global++;
+  });
+
+  if (global === 0) {
+    if (f.revisit && f.contact) {
+      return '<div class="empty"><h3>No tagged talks yet</h3>' +
+        '<p>Open a talk and tap <b>Revisit</b> or <b>Contact</b>, or turn off the filters.</p></div>';
+    }
+    if (f.revisit) {
+      return '<div class="empty"><h3>No talks to revisit</h3>' +
+        '<p>Open a talk and tap <b>Revisit</b>, or turn off this filter.</p></div>';
+    }
+    if (f.contact) {
+      return '<div class="empty"><h3>No contacts yet</h3>' +
+        '<p>Open a talk and tap <b>Contact</b>, or turn off this filter.</p></div>';
+    }
+    if (f.notes) {
+      return '<div class="empty"><h3>No notes yet</h3>' +
+        '<p>Open a talk and write a note, or turn off <b>Notes</b>.</p></div>';
+    }
+  }
+
+  if (f.revisit && f.contact) {
+    return '<div class="empty"><h3>No tagged talks here</h3>' +
+      '<p>None of your <b>Revisit</b> or <b>Contact</b> talks match this day or filter.</p></div>';
+  }
+  if (f.revisit) {
+    return '<div class="empty"><h3>No revisits here</h3>' +
+      '<p>None of your <b>Revisit</b> talks match this day or filter.</p></div>';
+  }
+  if (f.contact) {
+    return '<div class="empty"><h3>No contacts here</h3>' +
+      '<p>None of your <b>Contact</b> talks match this day or filter.</p></div>';
+  }
+  if (f.notes) {
+    return '<div class="empty"><h3>No notes here</h3>' +
+      '<p>None of your noted talks match this day or filter.</p></div>';
+  }
+  return '<div class="empty"><h3>No talks match</h3><p>Try a different day or filter.</p></div>';
+}
+function programmeEmptyHTML(f) {
+  if (f.notes || f.revisit || f.contact) return noteFilterEmptyHTML(f);
+  return '<div class="empty"><h3>No talks match</h3><p>Try a different day, room, or search term.</p></div>';
+}
+function noteBadgesHTML(sid) {
+  var n = getNote(sid);
+  var bits = [];
+  if (n.revisit) bits.push('<span class="note-tag revisit">revisit</span>');
+  if (n.contact) bits.push('<span class="note-tag contact">contact</span>');
+  if (n.text) bits.push('<span class="note-tag has-note" title="Has personal notes">note</span>');
+  return bits.length ? '<div class="note-badges">' + bits.join('') + '</div>' : '';
+}
+function patchNoteBadges(sid) {
+  var html = noteBadgesHTML(sid);
+  Array.prototype.forEach.call(document.querySelectorAll('[data-talk="' + sid + '"]'), function (row) {
+    var box = row.querySelector('.note-badges');
+    if (html) {
+      if (box) box.outerHTML = html;
+      else {
+        var host = row.querySelector('.t-body') || row.querySelector('.m-body');
+        if (host) host.insertAdjacentHTML('beforeend', html);
+      }
+    } else if (box) box.remove();
+  });
+}
 function setProfile(name) {
   PROFILE = name;
   try { localStorage.setItem(LS_CURRENT, name); } catch (e) {}
   PICKS = loadPicks(name);
+  NOTES = loadNotes(name);
   el('profileName').textContent = name;
   el('profileInitials').textContent = initials(name);
   updateCount();
@@ -138,17 +270,21 @@ function currentFilters() {
     q: el('q').value.trim().toLowerCase(),
     room: el('fRoom').value,
     theme: el('fTheme').value,
-    mine: el('onlyMine').checked
+    notes: el('onlyNotes').checked,
+    revisit: el('onlyRevisit').checked,
+    contact: el('onlyContact').checked
   };
 }
 function matches(rec, f) {
   var s = rec.session, t = rec.talk;
   if (f.room && s.room !== f.room) return false;
   if (f.theme && String(s.theme) !== f.theme) return false;
-  if (f.mine && !PICKS.has(t.sid)) return false;
+  if (!matchesNoteFilters(t.sid, f)) return false;
   if (f.q) {
+    var note = getNote(t.sid);
     var hay = (t.title + ' ' + t.presenter + ' ' + (t.affiliation || '') + ' ' +
-               (t.authors || []).join(' ') + ' ' + s.title + ' ' + (s.code || '')).toLowerCase();
+               (t.authors || []).join(' ') + ' ' + s.title + ' ' + (s.code || '') +
+               ' ' + note.text).toLowerCase();
     if (hay.indexOf(f.q) === -1) return false;
   }
   return true;
@@ -161,6 +297,102 @@ function hi(text, q) {
   return e.slice(0, i) + '<mark>' + e.slice(i, i + q.length) + '</mark>' + e.slice(i + q.length);
 }
 
+/* ---------- sort + collapse (view-only preferences) ----------
+   These describe how sessions are grouped on screen. They never read or write
+   picks/notes; the only persisted state is the mode and the collapsed id list. */
+var SORTS = {
+  /* Time is talk-level, not session-level: every talk starting at 10:15 is
+     listed back to back regardless of room, which is what you want when you are
+     deciding where to be right now. The other modes stay session-carded. */
+  time: { flat: true, bands: true },
+  room: {
+    key: function (s) { return 'room:' + (s.room || 'zz'); },
+    head: function (s) {
+      return s.room ? esc(roomLabel(s.room)) + (roomLevel(s.room) ? ' &middot; ' + esc(roomLevel(s.room)) : '')
+                    : 'Other venues';
+    },
+    within: function (a, b) {
+      return (a.s.date).localeCompare(b.s.date) || mins(a.s.start) - mins(b.s.start);
+    },
+    bands: false
+  },
+  session: {
+    key: function (s) { return 'sess:' + (s.code || 'zz'); },
+    head: function (s) { return s.code ? 'Session ' + esc(s.code) : esc(s.title); },
+    within: function (a, b) { return String(a.s.room).localeCompare(String(b.s.room)); },
+    bands: false
+  },
+  topic: {
+    key: function (s) { return 'topic:' + (s.theme || 'zz'); },
+    head: function (s) {
+      return s.theme ? '#' + s.theme + ' ' + esc(s.title) : esc(s.title);
+    },
+    within: function (a, b) {
+      return (a.s.date).localeCompare(b.s.date) || mins(a.s.start) - mins(b.s.start);
+    },
+    bands: false
+  }
+};
+function sortMode() { return SORTS[SORT] ? SORT : 'time'; }
+
+function loadViewPrefs() {
+  try {
+    var s = localStorage.getItem(LS_SORT);
+    if (s && SORTS[s]) SORT = s;
+  } catch (e) {}
+  // Older versions stored an array of collapsed ids; migrate so anyone who had
+  // sessions folded keeps them folded.
+  var raw = readJSON(LS_COLLAPSED, {});
+  COLLAPSED = {};
+  if (Array.isArray(raw)) raw.forEach(function (id) { COLLAPSED[id] = true; });
+  else if (raw && typeof raw === 'object') {
+    Object.keys(raw).forEach(function (id) { COLLAPSED[id] = !!raw[id]; });
+  }
+}
+function saveCollapsed() { writeJSON(LS_COLLAPSED, COLLAPSED); }
+
+/* A group is collapsed if the user said so; otherwise fall back to its default.
+   Poster blocks default to collapsed -- 279 posters at one time would otherwise
+   bury the rest of the evening. */
+function isCollapsed(id, dflt) {
+  if (Object.prototype.hasOwnProperty.call(COLLAPSED, id)) return COLLAPSED[id];
+  return !!dflt;
+}
+function setCollapsed(id, val) { COLLAPSED[id] = !!val; }
+
+function setSort(mode) {
+  SORT = SORTS[mode] ? mode : 'time';
+  try { localStorage.setItem(LS_SORT, SORT); } catch (e) {}
+  render();
+}
+function toggleCollapse(id, dflt) {
+  setCollapsed(id, !isCollapsed(id, dflt));
+  saveCollapsed();
+  render();
+}
+/* "Collapse all" applies to what is currently on screen, so it is predictable:
+   if anything visible is expanded, collapse those; otherwise expand them. */
+function collapseAll() {
+  var nodes = document.querySelectorAll('[data-group]');
+  if (!nodes.length) return;
+  var anyOpen = Array.prototype.some.call(nodes, function (n) {
+    return n.dataset.collapsed !== '1';
+  });
+  Array.prototype.forEach.call(nodes, function (n) { setCollapsed(n.dataset.group, anyOpen); });
+  saveCollapsed();
+  render();
+}
+function syncCollapseBtn() {
+  var nodes = document.querySelectorAll('[data-group]');
+  var anyOpen = Array.prototype.some.call(nodes, function (n) {
+    return n.dataset.collapsed !== '1';
+  });
+  var b = el('btnCollapse');
+  b.textContent = anyOpen ? 'Collapse all' : 'Expand all';
+  b.setAttribute('aria-pressed', String(!anyOpen));
+  b.hidden = !nodes.length;
+}
+
 /* ---------- render: programme ---------- */
 function renderProgramme() {
   var f = currentFilters();
@@ -171,15 +403,18 @@ function renderProgramme() {
 
   // Venue-wide items (registration, teas, lunches, socials) are context, not
   // choices, so they only show when the user is not narrowing the list down.
-  var plain = !f.q && !f.room && !f.theme && !f.mine;
+  var plain = !f.q && !f.room && !f.theme && !f.notes && !f.revisit && !f.contact;
   var evts = plain ? DATA.events.filter(function (e) {
     return DAY === 'all' || e.date === DAY;
   }) : [];
 
-  if (!recs.length && !evts.length) {
-    el('content').innerHTML = '<div class="empty"><h3>No talks match</h3><p>Try a different day, room, or search term.</p></div>';
+  if (!recs.length && (f.notes || f.revisit || f.contact || !evts.length)) {
+    el('content').innerHTML = programmeEmptyHTML(f);
     return;
   }
+
+  var mode = sortMode(), SORTER = SORTS[mode];
+  if (SORTER.flat) { renderFlatTime(recs, evts, f); return; }
 
   // group by session, keep sessions ordered by (date, start, room)
   var map = new Map();
@@ -188,24 +423,89 @@ function renderProgramme() {
     if (!map.has(k)) map.set(k, { s: r.session, talks: [] });
     map.get(k).talks.push(r.talk);
   });
+
   var groups = Array.from(map.values()).sort(function (a, b) {
     return (a.s.date + a.s.start).localeCompare(b.s.date + b.s.start) ||
            mins(a.s.start) - mins(b.s.start) ||
            String(a.s.room).localeCompare(String(b.s.room));
   });
 
-  // group sessions into time blocks
+  // bucket sessions by the active sort key, preserving first-seen order
   var blocks = new Map();
   groups.forEach(function (g) {
-    var k = g.s.date + ' ' + g.s.start + '-' + g.s.end;
+    var k = SORTER.key(g.s);
     if (!blocks.has(k)) blocks.set(k, []);
     blocks.get(k).push(g);
   });
+  blocks.forEach(function (gs) { gs.sort(SORTER.within); });
 
-  // interleave session blocks and venue bands in true chronological order
   var entries = [];
   blocks.forEach(function (gs) {
     entries.push({ type: 'block', date: gs[0].s.date, start: gs[0].s.start, gs: gs });
+  });
+  // Venue bands are chronological context, so they only make sense in time order.
+  if (SORTER.bands) {
+    evts.forEach(function (e) {
+      entries.push({ type: 'event', date: e.date, start: e.start || '00:00', e: e });
+    });
+    entries.sort(function (a, b) {
+      return a.date.localeCompare(b.date) || mins(a.start) - mins(b.start);
+    });
+  }
+
+  var shown = 0, capped = false, html = [];
+  entries.forEach(function (en) {
+    if (capped) return;
+    if (en.type === 'event') { html.push(bandHTML(en.e)); return; }
+    var gs = en.gs, s0 = gs[0].s;
+    var n = gs.reduce(function (a, g) { return a + g.talks.length; }, 0);
+    html.push('<section class="block"><div class="block-head">' +
+      '<span class="block-time">' + SORTER.head(s0) + '</span>' +
+      '<span class="block-line"></span><span class="block-n">' + n + ' talk' + (n === 1 ? '' : 's') + '</span>' +
+      '</div><div class="grid">');
+    gs.forEach(function (g) {
+      if (capped) return;
+      html.push(cardHTML(g, f));
+      // collapsed cards render no rows, so they cost nothing against the cap
+      if (!isCollapsed(g.s.id, false)) {
+        shown += g.talks.length;
+        if (shown >= RENDER_CAP) capped = true;
+      }
+    });
+    html.push('</div></section>');
+  });
+
+  if (capped) {
+    html.push('<div class="note">Showing the first ' + shown + ' of ' + recs.length +
+      ' matching talks. Narrow the search, or collapse sections, to see the rest.</div>');
+  }
+  el('content').innerHTML = html.join('');
+  syncCollapseBtn();
+}
+
+/* Time view: one group per distinct talk start time, so every talk beginning at
+   10:15 sits back to back regardless of room. Poster sessions are hundreds of
+   items at a single time, so they get their own clearly-labelled group that
+   starts collapsed. */
+function renderFlatTime(recs, evts, f) {
+  var buckets = new Map();
+  recs.forEach(function (r) {
+    var k = 't:' + r.session.date + ' ' + r.talk.start +
+            (r.session.kind === 'poster' ? ' p:' + r.session.id : '');
+    if (!buckets.has(k)) {
+      buckets.set(k, { id: k, date: r.session.date, start: r.talk.start,
+                       poster: r.session.kind === 'poster', session: r.session, rows: [] });
+    }
+    buckets.get(k).rows.push(r);
+  });
+
+  var entries = [];
+  buckets.forEach(function (b) {
+    b.rows.sort(function (x, y) {
+      return String(x.session.room).localeCompare(String(y.session.room)) ||
+             x.talk.title.localeCompare(y.talk.title);
+    });
+    entries.push({ type: 'group', date: b.date, start: b.start, g: b });
   });
   evts.forEach(function (e) {
     entries.push({ type: 'event', date: e.date, start: e.start || '00:00', e: e });
@@ -218,27 +518,50 @@ function renderProgramme() {
   entries.forEach(function (en) {
     if (capped) return;
     if (en.type === 'event') { html.push(bandHTML(en.e)); return; }
-    var gs = en.gs, s0 = gs[0].s;
-    var n = gs.reduce(function (a, g) { return a + g.talks.length; }, 0);
-    var dayLabel = DAY === 'all' ? (dayShort(s0.date) + ' &middot; ') : '';
-    html.push('<section class="block"><div class="block-head">' +
-      '<span class="block-time">' + dayLabel + hhmm(s0.start) + ' – ' + hhmm(s0.end) + '</span>' +
-      '<span class="block-line"></span><span class="block-n">' + n + ' talk' + (n === 1 ? '' : 's') + '</span>' +
-      '</div><div class="grid">');
-    gs.forEach(function (g) {
-      if (capped) return;
-      html.push(cardHTML(g, f));
-      shown += g.talks.length;
-      if (shown >= RENDER_CAP) capped = true;
+    var g = en.g;
+    var open = !isCollapsed(g.id, g.poster);   // posters default to collapsed
+    var n = g.rows.length;
+    var picked = 0, noted = 0;
+    g.rows.forEach(function (r) {
+      if (PICKS.has(r.talk.sid)) picked++;
+      if (hasNote(r.talk.sid)) noted++;
     });
-    html.push('</div></section>');
+    var word = g.poster ? (n === 1 ? 'poster' : 'posters') : (n === 1 ? 'talk' : 'talks');
+    var extra = [];
+    if (picked) extra.push('<b class="sum-pick">' + picked + ' picked</b>');
+    if (noted) extra.push('<b class="sum-note">' + noted + ' noted</b>');
+
+    html.push('<section class="tgroup' + (g.poster ? ' is-poster' : '') + '" data-group="' + esc(g.id) + '"' +
+      (open ? '' : ' data-collapsed="1"') + '>' +
+      '<div class="tgroup-head" data-collapse="' + esc(g.id) + '" data-default="' + (g.poster ? '1' : '') + '" ' +
+      'role="button" tabindex="0" aria-expanded="' + open + '" aria-label="' +
+      (open ? 'Collapse' : 'Expand') + ' ' + hhmm(g.start) + '">' +
+      '<span class="tgroup-time">' + (DAY === 'all' ? dayShort(g.date) + ' &middot; ' : '') + hhmm(g.start) + '</span>' +
+      (g.poster ? '<span class="tgroup-tag">' + esc(g.session.title) + '</span>' : '') +
+      '<span class="block-line"></span>' +
+      '<span class="tgroup-n">' + n + ' ' + word + (extra.length ? ' &middot; ' + extra.join(' &middot; ') : '') + '</span>' +
+      '<span class="chev" aria-hidden="true"><svg viewBox="0 0 24 24" width="16" height="16">' +
+      '<path fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" d="M6 9l6 6 6-6"/></svg></span>' +
+      '</div>');
+    if (open) {
+      html.push('<div class="tgroup-rows">');
+      g.rows.forEach(function (r) {
+        if (capped) return;
+        html.push(talkRowHTML(r.talk, r.session, f, true));
+        shown++;
+        if (shown >= RENDER_CAP) capped = true;
+      });
+      html.push('</div>');
+    }
+    html.push('</section>');
   });
 
   if (capped) {
     html.push('<div class="note">Showing the first ' + shown + ' of ' + recs.length +
-      ' matching talks. Narrow the search, room, or day to see the rest.</div>');
+      ' matching talks. Narrow the search, or collapse sections, to see the rest.</div>');
   }
   el('content').innerHTML = html.join('');
+  syncCollapseBtn();
 }
 
 function bandHTML(e) {
@@ -261,27 +584,62 @@ function cardHTML(g, f) {
   var s = g.s;
   var code = s.code ? s.code : (s.kind === 'poster' ? 'POSTER' : s.kind === 'plenary' ? 'PLENARY' : 'EVENT');
   var themeTag = s.theme ? '#' + s.theme : '';
-  var out = ['<article class="card" data-kind="' + s.kind + '"><div class="card-head">' +
+  var open = !isCollapsed(s.id, false);
+
+  // When collapsed, surface what's inside so picks and notes are never hidden.
+  var picked = 0, noted = 0;
+  g.talks.forEach(function (t) {
+    if (PICKS.has(t.sid)) picked++;
+    if (hasNote(t.sid)) noted++;
+  });
+  var summary = [g.talks.length + ' talk' + (g.talks.length === 1 ? '' : 's')];
+  if (picked) summary.push('<b class="sum-pick">' + picked + ' picked</b>');
+  if (noted) summary.push('<b class="sum-note">' + noted + ' noted</b>');
+
+  var out = ['<article class="card" data-kind="' + s.kind + '" data-sess="' + esc(s.id) + '"' +
+    ' data-group="' + esc(s.id) + '"' + (open ? '' : ' data-collapsed="1"') + '>' +
+    '<div class="card-head" data-collapse="' + esc(s.id) + '" role="button" tabindex="0" ' +
+    'aria-expanded="' + open + '" aria-label="' + (open ? 'Collapse' : 'Expand') + ' session">' +
     '<span class="code">' + esc(code) + '</span><div style="min-width:0">' +
     '<h3 class="card-title">' + hi(s.title, f.q) + '</h3><div class="card-meta">' +
     (s.room ? '<span class="room">' + esc(roomLabel(s.room)) + (roomLevel(s.room) ? ' &middot; ' + esc(roomLevel(s.room)) : '') + '</span>' : '') +
     (themeTag ? '<span>' + themeTag + '</span>' : '') +
-    '</div></div></div>'];
-  g.talks.forEach(function (t) {
-    var on = PICKS.has(t.sid);
-    out.push('<div class="talk' + (on ? ' is-on' : '') + '" data-talk="' + t.sid +
-      '" tabindex="0" role="button" aria-label="Open details">' +
-      '<span class="t-time">' + hhmm(t.start) + '</span>' +
-      '<div class="t-body"><div class="t-title">' + hi(t.title, f.q) + '</div>' +
-      '<div class="t-who">' + hi((t.honorific ? t.honorific + ' ' : '') + t.presenter, f.q) +
-      (t.affiliation ? ' <span class="aff">&middot; ' + hi(t.affiliation, f.q) + '</span>' : '') +
-      '</div></div>' +
-      '<button class="star" data-sid="' + t.sid + '" aria-pressed="' + on + '" ' +
-      'aria-label="' + (on ? 'Remove from' : 'Add to') + ' my schedule" title="' + (on ? 'Remove from' : 'Add to') + ' my schedule">' +
-      starSVG(on) + '</button></div>');
-  });
+    '<span class="card-sum">' + summary.join(' &middot; ') + '</span>' +
+    '</div></div>' +
+    '<span class="chev" aria-hidden="true"><svg viewBox="0 0 24 24" width="16" height="16">' +
+    '<path fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" d="M6 9l6 6 6-6"/></svg></span>' +
+    '</div>'];
+  if (!open) { out.push('</article>'); return out.join(''); }
+  g.talks.forEach(function (t) { out.push(talkRowHTML(t, s, f, false)); });
   out.push('</article>');
   return out.join('');
+}
+
+/* One row renderer for both views. The flat time list has no session card above
+   it, so it opts into showing the room + session code on the row itself. */
+function talkRowHTML(t, s, f, withWhere) {
+  var on = PICKS.has(t.sid);
+  var where = '';
+  if (withWhere) {
+    var bits = [];
+    if (s.room) {
+      bits.push('<span class="row-room">' + esc(roomLabel(s.room)) +
+        (roomLevel(s.room) ? ' &middot; ' + esc(roomLevel(s.room)) : '') + '</span>');
+    }
+    if (s.code) bits.push('<span class="row-sess">' + esc(s.code) + (s.theme ? ' &middot; #' + s.theme : '') + '</span>');
+    else if (s.kind === 'poster') bits.push('<span class="row-sess">Poster</span>');
+    where = bits.length ? '<div class="t-where">' + bits.join('') + '</div>' : '';
+  }
+  return '<div class="talk' + (on ? ' is-on' : '') + '" data-talk="' + t.sid +
+    '" tabindex="0" role="button" aria-label="Open details">' +
+    '<span class="t-time">' + hhmm(t.start) + '</span>' +
+    '<div class="t-body"><div class="t-title">' + hi(t.title, f.q) + '</div>' +
+    '<div class="t-who">' + hi((t.honorific ? t.honorific + ' ' : '') + t.presenter, f.q) +
+    (t.affiliation ? ' <span class="aff">&middot; ' + hi(t.affiliation, f.q) + '</span>' : '') +
+    '</div>' + where + noteBadgesHTML(t.sid) + '</div>' +
+    '<button class="star" data-sid="' + t.sid + '" aria-pressed="' + on + '" ' +
+    'aria-label="' + (on ? 'Remove from' : 'Add to') + ' my schedule" title="' + (on ? 'Remove from' : 'Add to') + ' my schedule">' +
+    starSVG(on) + '</button></div>';
 }
 function starSVG(on) {
   return '<svg viewBox="0 0 24 24" width="19" height="19">' +
@@ -301,6 +659,32 @@ function myPicks() {
            mins(a.talk.start) - mins(b.talk.start);
   });
   return out;
+}
+function notedTalks() {
+  var out = [];
+  Object.keys(NOTES).forEach(function (sid) {
+    if (!hasNote(sid)) return;
+    var r = BY_SID.get(sid);
+    if (r) out.push(r);
+  });
+  out.sort(function (a, b) {
+    return (a.session.date).localeCompare(b.session.date) ||
+           mins(a.talk.start) - mins(b.talk.start);
+  });
+  return out;
+}
+function profileSlug() {
+  return (PROFILE.toLowerCase().replace(/[^a-z0-9]+/g, '-') || 'profile');
+}
+function downloadBlob(filename, content, type) {
+  var blob = new Blob([content], { type: type });
+  var a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(function () { URL.revokeObjectURL(a.href); }, 4000);
 }
 
 /* Two picks clash when they overlap in time on the same day. With 14 rooms in
@@ -358,6 +742,7 @@ function renderMine() {
       ' &middot; ' + esc((r.talk.honorific ? r.talk.honorific + ' ' : '') + r.talk.presenter) + '</div>' +
       (c ? '<div class="clash-tag">⚠ Overlaps ' + esc(c[0].talk.title.slice(0, 40)) +
            (c.length > 1 ? ' +' + (c.length - 1) + ' more' : '') + '</div>' : '') +
+      noteBadgesHTML(r.talk.sid) +
       '</div>' +
       '<button class="star" data-sid="' + r.talk.sid + '" aria-pressed="true" aria-label="Remove from my schedule">' +
       starSVG(true) + '</button></div>');
@@ -413,6 +798,18 @@ function openTalk(sid) {
     body.push('<div class="dl"><dt>Authors</dt><dd class="muted">' +
       esc(t.authors.join(', ')) + '</dd></div>');
   }
+  body.push('<div class="my-notes" id="noteWrap">' +
+    '<h3>My notes</h3>' +
+    '<div class="note-tags" role="group" aria-label="Note tags">' +
+    NOTE_TAGS.map(function (t) {
+      return '<button type="button" class="note-tag-btn" data-tag="' + t.id + '" aria-pressed="false">' +
+        esc(t.label) + '</button>';
+    }).join('') +
+    '</div>' +
+    '<textarea id="noteText" rows="4" maxlength="' + NOTE_MAX + '" ' +
+    'placeholder="Your thoughts on this talk..."></textarea>' +
+    '<p class="note-hint"><b>Notes stay on this device.</b> They are lost if you clear browser data and are not sent via share links. Use <b>Notes (.md)</b> or <b>Backup</b> in My schedule to keep a copy.</p>' +
+    '</div>');
   body.push('<div id="absWrap" class="abstract"><h3>Abstract</h3><div id="absText"></div></div>');
   el('talkBody').innerHTML = body.join('');
 
@@ -420,6 +817,7 @@ function openTalk(sid) {
   if (!dlg.open) dlg.showModal();       // open before filling: fillAbstract checks .open
   syncTalkStar();
   fillAbstract(sid);
+  fillNoteFields(sid);
   if (ABSTRACTS_STATE === 'idle') loadAbstracts();
   el('talkBody').scrollTop = 0;
 }
@@ -428,9 +826,62 @@ function openTalk(sid) {
    some engines (including Electron shells) never fire them, which would leave
    OPEN_SID pointing at a talk that is no longer on screen. */
 function closeTalk() {
+  saveOpenNote();
   OPEN_SID = null;
   var dlg = el('talkDlg');
   if (dlg.open) dlg.close();
+}
+
+function fillNoteFields(sid) {
+  var ta = el('noteText');
+  if (!ta) return;
+  var n = getNote(sid);
+  ta.value = n.text;
+  Array.prototype.forEach.call(document.querySelectorAll('.note-tag-btn'), function (btn) {
+    var on = !!n[btn.dataset.tag];
+    btn.classList.toggle('is-on', on);
+    btn.setAttribute('aria-pressed', String(on));
+  });
+}
+
+function readNoteFromDialog() {
+  var ta = el('noteText');
+  if (!ta) return { text: '', revisit: false, contact: false };
+  var n = { text: ta.value.trim().slice(0, NOTE_MAX), revisit: false, contact: false };
+  Array.prototype.forEach.call(document.querySelectorAll('.note-tag-btn.is-on'), function (btn) {
+    n[btn.dataset.tag] = true;
+  });
+  return n;
+}
+
+function noteFilterMatchChanged(sid, had) {
+  return noteFiltersActive() && had !== matchesNoteFilters(sid, currentFilters());
+}
+function saveOpenNote() {
+  if (!OPEN_SID) return;
+  var sid = OPEN_SID;
+  var had = matchesNoteFilters(sid, currentFilters());
+  var n = readNoteFromDialog();
+  if (n.text || n.revisit || n.contact) NOTES[sid] = n;
+  else delete NOTES[sid];
+  saveNotes();
+  patchNoteBadges(sid);
+  if (noteFilterMatchChanged(sid, had)) render();
+}
+
+function toggleNoteTag(btn) {
+  if (!OPEN_SID) return;
+  var tag = btn.dataset.tag;
+  var had = matchesNoteFilters(OPEN_SID, currentFilters());
+  var n = readNoteFromDialog();
+  n[tag] = !n[tag];
+  if (n.text || n.revisit || n.contact) NOTES[OPEN_SID] = n;
+  else delete NOTES[OPEN_SID];
+  saveNotes();
+  btn.classList.toggle('is-on', n[tag]);
+  btn.setAttribute('aria-pressed', String(n[tag]));
+  patchNoteBadges(OPEN_SID);
+  if (noteFilterMatchChanged(OPEN_SID, had)) render();
 }
 
 function fillAbstract(sid) {
@@ -460,7 +911,11 @@ function syncTalkStar() {
   b.innerHTML = starSVG(on) + '<span>' + (on ? 'In my schedule' : 'Add to my schedule') + '</span>';
 }
 
-/* ---------- calendar ---------- */
+/* ---------- export & backup ---------- */
+
+/* Calendar export. Times in the programme are venue-local (Auckland, UTC+12 in
+   July); .ics carries UTC, so they are converted here rather than trusting the
+   viewer's timezone. */
 function icsTime(date, t) {
   var dp = date.split('-').map(Number), tp = t.split(':').map(Number);
   var ms = Date.UTC(dp[0], dp[1] - 1, dp[2], tp[0] - NZ_OFFSET, tp[1]);
@@ -489,10 +944,12 @@ function buildICS() {
   list.forEach(function (r) {
     var loc = roomLabel(r.session.room) + (roomLevel(r.session.room) ? ', ' + roomLevel(r.session.room) : '') +
               ', NZICC Auckland';
+    var note = getNote(r.talk.sid);
     var desc = (r.talk.honorific ? r.talk.honorific + ' ' : '') + r.talk.presenter +
       (r.talk.affiliation ? ' (' + r.talk.affiliation + ')' : '') +
       (r.session.code ? '\nSession ' + r.session.code + ' — ' + r.session.title : '') +
-      ((r.talk.authors && r.talk.authors.length > 1) ? '\nAuthors: ' + r.talk.authors.join(', ') : '');
+      ((r.talk.authors && r.talk.authors.length > 1) ? '\nAuthors: ' + r.talk.authors.join(', ') : '') +
+      (note.text ? '\n\nMy notes: ' + note.text : '');
     L.push('BEGIN:VEVENT');
     L.push('UID:' + r.talk.id + '@icrs2026-planner');
     L.push('DTSTAMP:' + stamp);
@@ -509,13 +966,93 @@ function buildICS() {
 function downloadICS() {
   var txt = buildICS();
   if (!txt) return;
-  var blob = new Blob([txt], { type: 'text/calendar;charset=utf-8' });
-  var a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = 'icrs2026-' + (PROFILE.toLowerCase().replace(/[^a-z0-9]+/g, '-') || 'schedule') + '.ics';
-  document.body.appendChild(a); a.click(); a.remove();
-  setTimeout(function () { URL.revokeObjectURL(a.href); }, 4000);
+  downloadBlob('icrs2026-' + profileSlug() + '.ics', txt, 'text/calendar;charset=utf-8');
   toast('Calendar file downloaded (' + PICKS.size + ' talks).');
+}
+
+function buildNotesMarkdown() {
+  var list = notedTalks();
+  if (!list.length) return null;
+  var lines = [
+    '# ICRS 2026 notes — ' + PROFILE,
+    '',
+    'Exported ' + new Date().toISOString().slice(0, 10) + '.',
+    ''
+  ];
+  list.forEach(function (r) {
+    var t = r.talk, s = r.session, note = getNote(t.sid);
+    var tags = [];
+    if (note.revisit) tags.push('revisit');
+    if (note.contact) tags.push('contact');
+    lines.push('## ' + dayLabelOf(s.date) + ' · ' + hhmm(t.start) + '–' + hhmm(t.end) +
+      ' · ' + roomLabel(s.room));
+    lines.push('');
+    lines.push('**' + t.title + '**');
+    lines.push('');
+    lines.push((t.honorific ? t.honorific + ' ' : '') + t.presenter +
+      (s.code ? ' · ' + s.code : ''));
+    if (tags.length) lines.push('', 'Tags: ' + tags.join(', '));
+    if (note.text) lines.push('', note.text);
+    lines.push('', '---', '');
+  });
+  return lines.join('\n');
+}
+function downloadNotesMd() {
+  var txt = buildNotesMarkdown();
+  if (!txt) { toast('No notes to export yet.'); return; }
+  downloadBlob('icrs2026-' + profileSlug() + '-notes.md', txt, 'text/markdown;charset=utf-8');
+  toast('Notes exported (' + notedTalks().length + ' talks).');
+}
+
+function buildBackup() {
+  var profs = profiles();
+  var picks = {}, notes = {};
+  profs.forEach(function (n) {
+    picks[n] = readJSON(LS_PICKS + n, []);
+    notes[n] = readJSON(LS_NOTES + n, {});
+  });
+  return {
+    v: 1,
+    app: 'icrs2026',
+    exported: new Date().toISOString().slice(0, 10),
+    current: PROFILE,
+    profiles: profs,
+    picks: picks,
+    notes: notes
+  };
+}
+function downloadBackup() {
+  var profs = profiles();
+  if (!profs.length) { toast('Create a profile first.'); return; }
+  downloadBlob('icrs2026-backup.json', JSON.stringify(buildBackup(), null, 2), 'application/json');
+  toast('Backup saved (' + profs.length + ' profile' + (profs.length === 1 ? '' : 's') + ').');
+}
+function restoreBackup(data) {
+  if (!data || data.v !== 1 || data.app !== 'icrs2026' || !Array.isArray(data.profiles)) {
+    toast('That file is not a valid ICRS backup.');
+    return;
+  }
+  var n = data.profiles.length;
+  if (!n) { toast('Backup has no profiles.'); return; }
+  if (!confirm('Restore picks and notes for ' + n + ' profile' + (n === 1 ? '' : 's') +
+      ' from this backup? Existing data for those names will be replaced.')) return;
+
+  var list = profiles();
+  data.profiles.forEach(function (name) {
+    if (list.indexOf(name) === -1) list.push(name);
+    writeJSON(LS_PICKS + name, data.picks[name] || []);
+    writeJSON(LS_NOTES + name, data.notes[name] || {});
+  });
+  saveProfiles(list);
+  if (data.current && list.indexOf(data.current) !== -1) setProfile(data.current);
+  else if (PROFILE && list.indexOf(PROFILE) !== -1) setProfile(PROFILE);
+  else setProfile(list[0]);
+  updateCount();
+  render();
+  toast('Restored ' + n + ' profile' + (n === 1 ? '' : 's') + '.');
+}
+function pickRestoreFile() {
+  el('restoreFile').click();
 }
 
 /* ---------- share ---------- */
@@ -630,7 +1167,9 @@ function saveProfileFromInput() {
     else list = list.filter(function (x) { return x !== old; });
     saveProfiles(list);
     writeJSON(LS_PICKS + name, Array.from(PICKS));
+    writeJSON(LS_NOTES + name, NOTES);
     try { localStorage.removeItem(LS_PICKS + old); } catch (e) {}
+    try { localStorage.removeItem(LS_NOTES + old); } catch (e) {}
   } else if (list.indexOf(name) === -1) {
     list.push(name);
     saveProfiles(list);
@@ -656,6 +1195,45 @@ function maybeShowHelp() {
   var seen;
   try { seen = localStorage.getItem(LS_HELP); } catch (e) {}
   if (!seen && !el('helpDlg').open && !el('profileDlg').open) openHelp();
+}
+
+/* ---------- storage notice ----------
+   Two different situations, deliberately handled differently:
+   - storage works: a one-time, dismissible heads-up about private browsing.
+   - storage is blocked: a permanent warning, because nothing can be saved at
+     all -- including the "dismissed" flag, so a one-time banner would be a lie. */
+function probeStorage() {
+  try {
+    localStorage.setItem('icrs2026.probe', '1');
+    localStorage.removeItem('icrs2026.probe');
+    return true;
+  } catch (e) { return false; }
+}
+function showNotice() {
+  var box = el('notice');
+  box.style.display = '';   // clear any inline hide from a previous dismissal
+  if (!STORAGE_OK) {
+    el('noticeMain').innerHTML = '<b>This browser is blocking storage.</b> Picks and notes cannot be ' +
+      'saved right now — they will vanish when you close this tab. Leaving private/incognito mode, ' +
+      'or allowing site data for this page, fixes it.';
+    box.classList.add('is-hard');
+    el('noticeClose').hidden = true;
+    box.hidden = false;
+    return;
+  }
+  var seen;
+  try { seen = localStorage.getItem(LS_NOTICE); } catch (e) {}
+  if (seen) return;
+  box.hidden = false;
+}
+function dismissNotice() {
+  var box = el('notice');
+  box.hidden = true;
+  // Belt and braces: an inline style beats any class rule, so dismissing works
+  // even if a stale cached stylesheet is in play -- which is exactly the case on
+  // a home-screen install still serving the previous version's CSS.
+  box.style.display = 'none';
+  try { localStorage.setItem(LS_NOTICE, '1'); } catch (e) {}
 }
 
 function renderProfileList() {
@@ -691,7 +1269,7 @@ function toggle(sid) {
   // A full re-render of a day is ~600 rows; doing that on every star tap feels
   // sluggish on a phone. Patch the affected rows in place instead, and only
   // re-render when the toggle actually changes which rows belong on screen.
-  if (VIEW === 'mine' || el('onlyMine').checked) { render(); return; }
+  if (VIEW === 'mine') { render(); return; }
 
   var on = PICKS.has(sid);
   var label = (on ? 'Remove from' : 'Add to') + ' my schedule';
@@ -757,6 +1335,9 @@ function wire() {
     if (star) { e.stopPropagation(); toggle(star.dataset.sid); return; }
     var row = e.target.closest('[data-talk]');
     if (row) { openTalk(row.dataset.talk); return; }
+    // collapse toggle sits on the card head, above the talk rows
+    var ch = e.target.closest('[data-collapse]');
+    if (ch) { toggleCollapse(ch.dataset.collapse, ch.dataset.default === '1'); return; }
     var tab = e.target.closest('.day-tab');
     if (tab) { setDay(tab.dataset.day); return; }
     var vt = e.target.closest('.view-tab');
@@ -769,6 +1350,7 @@ function wire() {
         var list = profiles().filter(function (x) { return x !== n; });
         saveProfiles(list);
         try { localStorage.removeItem(LS_PICKS + n); } catch (err) {}
+        try { localStorage.removeItem(LS_NOTES + n); } catch (err) {}
         if (n === PROFILE) {
           if (list.length) setProfile(list[0]);
           else { PROFILE = ''; PICKS = new Set(); el('profileDlg').close(); openProfile(true); return; }
@@ -784,9 +1366,14 @@ function wire() {
   // keyboard: talk rows behave like buttons
   document.addEventListener('keydown', function (e) {
     if (e.key !== 'Enter' && e.key !== ' ') return;
+    var ch = e.target.closest && e.target.closest('[data-collapse]');
+    if (ch) { e.preventDefault(); toggleCollapse(ch.dataset.collapse, ch.dataset.default === '1'); return; }
     var row = e.target.closest && e.target.closest('[data-talk]');
     if (row && !e.target.closest('.star')) { e.preventDefault(); openTalk(row.dataset.talk); }
   });
+  el('fSort').addEventListener('change', function () { setSort(el('fSort').value); });
+  el('btnCollapse').addEventListener('click', collapseAll);
+  el('noticeClose').addEventListener('click', dismissNotice);
   // how-to guide
   el('helpBtn').addEventListener('click', openHelp);
   el('helpClose').addEventListener('click', closeHelp);
@@ -797,11 +1384,24 @@ function wire() {
 
   el('talkClose').addEventListener('click', closeTalk);
   el('talkDlg').addEventListener('close', function () { OPEN_SID = null; });
-  el('talkDlg').addEventListener('cancel', function () { OPEN_SID = null; });
+  el('talkDlg').addEventListener('cancel', function () { saveOpenNote(); OPEN_SID = null; });
   // click the backdrop to dismiss
   el('talkDlg').addEventListener('click', function (ev) {
     if (ev.target === el('talkDlg')) closeTalk();
   });
+  el('talkBody').addEventListener('click', function (ev) {
+    var tagBtn = ev.target.closest('.note-tag-btn');
+    if (tagBtn) { ev.preventDefault(); toggleNoteTag(tagBtn); }
+  });
+  var noteTimer;
+  el('talkBody').addEventListener('input', function (ev) {
+    if (ev.target.id !== 'noteText') return;
+    clearTimeout(noteTimer);
+    noteTimer = setTimeout(saveOpenNote, 400);
+  });
+  el('talkBody').addEventListener('blur', function (ev) {
+    if (ev.target.id === 'noteText') saveOpenNote();
+  }, true);
   el('talkStar').addEventListener('click', function () {
     if (!OPEN_SID) return;
     toggle(OPEN_SID);
@@ -835,9 +1435,25 @@ function wire() {
   });
   el('fRoom').addEventListener('change', render);
   el('fTheme').addEventListener('change', render);
-  el('onlyMine').addEventListener('change', render);
-  el('btnIcs').addEventListener('click', downloadICS);
+  el('onlyNotes').addEventListener('change', render);
+  el('onlyRevisit').addEventListener('change', render);
+  el('onlyContact').addEventListener('change', render);
   el('btnShare').addEventListener('click', copyShare);
+  el('btnIcs').addEventListener('click', downloadICS);
+  el('btnNotesMd').addEventListener('click', downloadNotesMd);
+  el('btnBackup').addEventListener('click', downloadBackup);
+  el('btnRestore').addEventListener('click', pickRestoreFile);
+  el('restoreFile').addEventListener('change', function () {
+    var file = el('restoreFile').files[0];
+    el('restoreFile').value = '';
+    if (!file) return;
+    var reader = new FileReader();
+    reader.onload = function () {
+      try { restoreBackup(JSON.parse(reader.result)); }
+      catch (e) { toast('Could not read that backup file.'); }
+    };
+    reader.readAsText(file);
+  });
   el('btnClear').addEventListener('click', function () {
     if (!PICKS.size) { toast('Nothing to clear.'); return; }
     if (confirm('Remove all ' + PICKS.size + ' picks from "' + PROFILE + '"?')) {
@@ -874,8 +1490,12 @@ function boot() {
       DATA = d;
       flatten();
       el('capturedAt').textContent = d.meta.capturedAt;
+      STORAGE_OK = probeStorage();
+      loadViewPrefs();
       buildFilters();
+      el('fSort').value = sortMode();
       wire();
+      showNotice();
 
       var list = profiles();
       var cur = '';
@@ -904,9 +1524,24 @@ function boot() {
     });
 }
 
+/* Updating an installed (home-screen) app is the awkward case: it serves from
+   cache and has no address bar to force a reload, so a fix can sit unused for
+   several launches. The worker calls skipWaiting/claim, and when it takes over
+   we reload once so the new CSS/JS actually apply on this launch rather than the
+   next one. Picks and notes live in localStorage, so a reload costs nothing. */
 if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+  var swReloading = false;
+  navigator.serviceWorker.addEventListener('controllerchange', function () {
+    if (swReloading) return;
+    swReloading = true;
+    // only reload for a genuine version swap, not the very first install
+    if (navigator.serviceWorker.controller) location.reload();
+  });
   window.addEventListener('load', function () {
-    navigator.serviceWorker.register('sw.js').catch(function () {});
+    navigator.serviceWorker.register('sw.js').then(function (reg) {
+      reg.update();                      // check for a new version on every launch
+      setInterval(function () { reg.update(); }, 60 * 60 * 1000);
+    }).catch(function () {});
   });
 }
 el('content').innerHTML = '<div class="loading">Loading the programme…</div>';
