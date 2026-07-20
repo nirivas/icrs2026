@@ -36,7 +36,7 @@ a{color:var(--teal)}
   padding:calc(8px + env(safe-area-inset-top)) 0 8px;
 }
 .topbar-in{display:flex;align-items:center;justify-content:space-between;gap:10px}
-.brand{display:flex;align-items:center;gap:9px;min-width:0}
+.brand{display:flex;align-items:center;gap:9px;min-width:0;cursor:pointer}
 .brand-mark{display:grid;place-items:center;color:#8ee6f2;flex:none}
 .brand-text{display:flex;flex-direction:column;line-height:1.15;min-width:0}
 .brand-text b{font-size:16px;letter-spacing:.2px}
@@ -85,13 +85,23 @@ a{color:var(--teal)}
 
 /* controls */
 .controls{display:flex;flex-direction:column;gap:8px;padding:10px 0 8px}
+.hide-past-check{width:100%;flex:1 1 100%;max-width:none}
+.staging-banner{
+  margin:8px 0 0;padding:8px 12px;border-radius:var(--r);
+  font-size:12px;line-height:1.4;color:var(--ink-2);
+  background:color-mix(in srgb,var(--coral) 10%,var(--panel));
+  border:1px solid color-mix(in srgb,var(--coral) 28%,var(--line));
+}
+.staging-banner b{color:var(--coral)}
 .controls-row{display:flex;gap:8px;flex-wrap:wrap}
 .search-wrap{position:relative;flex:1 1 100%;min-width:0}
 .search-icon{position:absolute;left:11px;top:50%;transform:translateY(-50%);color:var(--ink-3);pointer-events:none}
 #q{
-  width:100%;padding:10px 34px;border:1px solid var(--line);border-radius:var(--r);
-  background:var(--panel);color:var(--ink);font:inherit;font-size:16px;
-  max-width:100%;box-sizing:border-box;
+  width:100%;padding:10px 40px 10px 34px;border:1px solid var(--line);border-radius:var(--r);
+  background:var(--panel);color:var(--ink);
+  font-family:inherit;font-size:16px;line-height:1.5;
+  max-width:100%;box-sizing:border-box;-webkit-text-size-adjust:100%;
+  -webkit-appearance:none;appearance:none;
 }
 #q:focus,select:focus,.filter-check:focus-within{outline:2px solid var(--teal-2);outline-offset:1px}
 .q-clear{
@@ -132,7 +142,7 @@ select{
 .time-list{display:flex;flex-direction:column;gap:6px}
 .time-list .talk{border:1px solid var(--line);border-radius:var(--r);background:var(--panel)}
 .time-list .talk:first-child{border-top:1px solid var(--line)}
-.time-slot-head{margin:12px 0 2px;font-size:12px;font-weight:700;color:var(--teal)}
+.time-slot-head{margin:12px 0 2px;font-size:12px;font-weight:700;color:var(--teal);cursor:pointer}
 .time-slot-head:first-child{margin-top:0}
 .t-meta{font-size:11px;color:var(--ink-3);margin-top:3px;line-height:1.35}
 @media(min-width:560px){
@@ -160,7 +170,7 @@ select{
 .block-head{
   display:flex;align-items:center;gap:9px;margin:0 0 8px;
   position:sticky;top:calc(50px + env(safe-area-inset-top));z-index:10;
-  background:var(--bg);padding:5px 0;
+  background:var(--bg);padding:5px 0;cursor:pointer;
 }
 .block-time{font-weight:700;font-size:13px;color:var(--teal);white-space:nowrap}
 .block-line{flex:1;height:1px;background:var(--line)}
@@ -188,7 +198,7 @@ select{
   background:var(--panel);border:1px solid var(--line);border-radius:var(--r);
   box-shadow:var(--shadow);overflow:hidden;
 }
-.card-head{display:flex;gap:9px;padding:10px 11px;align-items:flex-start;border-bottom:1px solid var(--line)}
+.card-head{display:flex;gap:9px;padding:10px 11px;align-items:flex-start;border-bottom:1px solid var(--line);cursor:pointer}
 .code{
   flex:none;background:var(--deep);color:#fff;border-radius:7px;
   padding:3px 7px;font-size:11px;font-weight:700;letter-spacing:.4px;
@@ -198,10 +208,10 @@ select{
 .room{background:var(--bg);border:1px solid var(--line);border-radius:5px;padding:1px 6px;font-weight:600;color:var(--ink-2)}
 .card[data-kind="poster"] .code{background:var(--sun)}
 .card[data-kind="plenary"] .code,.card[data-kind="special"] .code{background:var(--coral)}
-.card.is-past,.talk.time-row.is-past{
-  opacity:.5;
-}
-.card.is-past .code,.talk.time-row.is-past .t-time{color:var(--ink-3)}
+.card-head.is-past{opacity:.5}
+.card-head.is-past .code{color:var(--ink-3)}
+.talk.is-past{opacity:.5}
+.talk.is-past .t-time{color:var(--ink-3)}
 
 /* talk row */
 .talk{display:flex;gap:9px;padding:8px 11px;border-top:1px solid var(--line);align-items:flex-start}
@@ -332,8 +342,18 @@ mark{background:color-mix(in srgb,var(--sun) 45%,transparent);color:inherit;bord
 .dlg-actions{display:flex;justify-content:flex-end;gap:8px;margin:16px 0 0;padding:0}
 
 /* talk detail dialog */
-.dlg-talk{max-width:min(660px,calc(100vw - 22px));width:calc(100% - 22px);overflow-x:clip}
-.talk-dlg{display:flex;flex-direction:column;max-height:86vh;max-width:100%;overflow-x:clip}
+.dlg-talk{
+  max-width:min(660px,calc(100vw - 22px));width:min(calc(100% - 22px),100vw);
+  overflow-x:clip;margin:auto;
+}
+.talk-dlg{display:flex;flex-direction:column;max-height:86dvh;width:100%;overflow-x:clip}
+@media(max-width:600px){
+  .dlg-talk{
+    width:100%;max-width:100%;height:100%;max-height:100%;
+    margin:0;border-radius:0;
+  }
+  .talk-dlg{max-height:100dvh;height:100%}
+}
 .talk-dlg-head{
   display:flex;gap:10px;align-items:flex-start;padding:15px 15px 12px;
   border-bottom:1px solid var(--line);
@@ -367,7 +387,8 @@ mark{background:color-mix(in srgb,var(--sun) 45%,transparent);color:inherit;bord
 .note-tags{display:flex;gap:7px;flex-wrap:wrap;margin-bottom:8px}
 .note-tag-btn{
   border:1px solid var(--line);background:var(--bg);color:var(--ink-2);
-  border-radius:999px;padding:5px 11px;font:inherit;font-size:12px;font-weight:600;cursor:pointer;
+  border-radius:999px;padding:5px 11px;
+  font-family:inherit;font-size:16px;font-weight:600;line-height:1.2;cursor:pointer;
 }
 .note-tag-btn:hover{border-color:var(--teal);color:var(--teal)}
 .note-tag-btn.is-on{background:var(--teal);border-color:var(--teal);color:#fff}
@@ -375,8 +396,10 @@ mark{background:color-mix(in srgb,var(--sun) 45%,transparent);color:inherit;bord
 .note-tag-btn.is-on[data-tag="contact"]{background:var(--coral);border-color:var(--coral);color:#fff}
 #noteText{
   width:100%;padding:10px 11px;border:1px solid var(--line);border-radius:var(--r);
-  background:var(--bg);color:var(--ink);font:inherit;font-size:16px;line-height:1.45;
+  background:var(--bg);color:var(--ink);
+  font-family:inherit;font-size:16px;line-height:1.45;
   resize:vertical;min-height:88px;max-width:100%;box-sizing:border-box;
+  -webkit-text-size-adjust:100%;touch-action:manipulation;
 }
 #noteText:focus{outline:2px solid var(--teal-2);outline-offset:1px}
 .note-hint{margin:7px 0 0;font-size:11px;color:var(--ink-3)}

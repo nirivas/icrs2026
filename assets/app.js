@@ -25,7 +25,10 @@ var LS_HELP = 'icrs2026.helpSeen';
 var LS_SYNC_ROOM = 'icrs2026.syncRoom';
 var LS_SYNC_AT = 'icrs2026.syncAt';
 var LS_PROG_LAYOUT = 'icrs2026.progLayout';
-var CROSS_DEVICE_SYNC = /orlando-code\.github\.io$/i.test(location.hostname);
+var SITE_MODE = window.ICRS_SITE_MODE || 'public';
+var STAGING_SITE = SITE_MODE === 'staging';
+var ENHANCED_UI = SITE_MODE !== 'public';
+var CROSS_DEVICE_SYNC = SITE_MODE === 'personal' || SITE_MODE === 'staging';
 var SYNC_URL = (window.ICRS_SYNC_URL || '').replace(/\/$/, '');
 var CLOUD_SYNC = CROSS_DEVICE_SYNC && !!SYNC_URL;
 var SYNC_WORDS = ['coral', 'reef', 'tide', 'kelp', 'shell', 'wave', 'fin', 'bay', 'manta', 'nemo'];
@@ -36,6 +39,7 @@ var syncCloudReady = false;
 var syncLocalDirty = false;
 var upNextTimer = null;
 var UP_NEXT_MINS = 30;
+var PAST_HIDE_BUFFER = 15;
 var NOTE_MAX = 4000;
 var NOTE_TAGS = [
   { id: 'revisit', label: 'Revisit' },
@@ -81,6 +85,7 @@ function loadAbstracts() {
       ABSTRACTS = j;
       ABSTRACTS_STATE = 'ready';
       if (OPEN_SID) fillAbstract(OPEN_SID);   // dialog opened before it landed
+      if (el('q') && el('q').value.trim()) render();
       return j;
     })
     .catch(function () {
@@ -318,6 +323,13 @@ function roomLevel(id) {
   return r && r.level ? r.level : '';
 }
 
+function abstractSearchText(sid) {
+  if (ABSTRACTS_STATE !== 'ready' || !ABSTRACTS) return '';
+  var txt = ABSTRACTS[sid];
+  if (!txt) return '';
+  return String(txt).replace(/<\s*\/?\s*i\s*>/gi, ' ');
+}
+
 /* ---------- filters ---------- */
 function currentFilters() {
   return {
@@ -327,11 +339,13 @@ function currentFilters() {
     mine: el('onlyMine').checked,
     notes: el('onlyNotes').checked,
     revisit: el('onlyRevisit').checked,
-    contact: el('onlyContact').checked
+    contact: el('onlyContact').checked,
+    hidePast: el('hidePast') && el('hidePast').checked
   };
 }
 function matches(rec, f) {
   var s = rec.session, t = rec.talk;
+  if (f.hidePast && talkEndedWithBuffer(s.date, t.end)) return false;
   if (f.room && s.room !== f.room) return false;
   if (f.theme && String(s.theme) !== f.theme) return false;
   if (f.mine && !PICKS.has(t.sid)) return false;
@@ -340,7 +354,7 @@ function matches(rec, f) {
     var note = getNote(t.sid);
     var hay = (t.title + ' ' + t.presenter + ' ' + (t.affiliation || '') + ' ' +
                (t.authors || []).join(' ') + ' ' + s.title + ' ' + (s.code || '') +
-               ' ' + note.text).toLowerCase();
+               ' ' + note.text + ' ' + abstractSearchText(t.sid)).toLowerCase();
     if (hay.indexOf(f.q) === -1) return false;
   }
   return true;
@@ -387,7 +401,7 @@ function talkMetaHTML(s) {
 function talkRowHTML(r, f, flat) {
   var t = r.talk;
   var on = PICKS.has(t.sid);
-  var past = flat && venueSlotEnded(r.session.date, t.end);
+  var past = venueSlotEnded(r.session.date, t.end);
   return '<div class="talk' + (flat ? ' time-row' : '') + (on ? ' is-on' : '') + (past ? ' is-past' : '') + '" data-talk="' + t.sid +
     '" tabindex="0" role="button" aria-label="Open details">' +
     '<span class="t-time">' + hhmm(t.start) + '</span>' +
@@ -402,7 +416,7 @@ function talkRowHTML(r, f, flat) {
     starSVG(on) + '</button></div>';
 }
 function renderProgramme() {
-  if (CROSS_DEVICE_SYNC && programmeLayout() === 'time') {
+  if (programmeLayout() === 'time') {
     renderProgrammeByTime();
     return;
   }
@@ -455,7 +469,7 @@ function renderProgramme() {
     var gs = en.gs, s0 = gs[0].s;
     var n = gs.reduce(function (a, g) { return a + g.talks.length; }, 0);
     var dayLabel = DAY === 'all' ? (dayShort(s0.date) + ' &middot; ') : '';
-    html.push('<section class="block"><div class="block-head">' +
+    html.push('<section class="block"><div class="block-head" role="button" tabindex="0" aria-label="Back to top">' +
       '<span class="block-time">' + dayLabel + hhmm(s0.start) + ' – ' + hhmm(s0.end) + '</span>' +
       '<span class="block-line"></span><span class="block-n">' + n + ' talk' + (n === 1 ? '' : 's') + '</span>' +
       '</div><div class="grid">');
@@ -514,7 +528,7 @@ function renderProgrammeByTime() {
     if (slot !== lastSlot) {
       lastSlot = slot;
       var dayPrefix = DAY === 'all' ? dayShort(en.date) + ' · ' : '';
-      html.push('<div class="time-slot-head">' + dayPrefix + hhmm(en.r.talk.start) + '</div>');
+      html.push('<div class="time-slot-head" role="button" tabindex="0" aria-label="Back to top">' + dayPrefix + hhmm(en.r.talk.start) + '</div>');
     }
     html.push(talkRowHTML(en.r, f, true));
     shown++;
@@ -550,19 +564,28 @@ function venueSlotEnded(date, endTime, now) {
   if (date > now.date) return false;
   return mins(endTime) <= now.mins;
 }
+function talkEndedWithBuffer(date, endTime, now) {
+  now = now || venueNow();
+  if (date < now.date) return true;
+  if (date > now.date) return false;
+  return mins(endTime) + PAST_HIDE_BUFFER <= now.mins;
+}
 
 function cardHTML(g, f) {
   var s = g.s;
-  var past = venueSlotEnded(s.date, s.end);
+  var talks = g.talks.slice().sort(function (a, b) { return mins(a.start) - mins(b.start); });
+  var allPast = talks.length
+    ? talks.every(function (t) { return venueSlotEnded(s.date, t.end); })
+    : venueSlotEnded(s.date, s.end);
   var code = s.code ? s.code : (s.kind === 'poster' ? 'POSTER' : s.kind === 'plenary' ? 'PLENARY' : 'EVENT');
   var themeTag = s.theme ? '#' + s.theme : '';
-  var out = ['<article class="card' + (past ? ' is-past' : '') + '" data-kind="' + s.kind + '"><div class="card-head">' +
+  var out = ['<article class="card" data-kind="' + s.kind + '"><div class="card-head' + (allPast ? ' is-past' : '') + '" role="button" tabindex="0" aria-label="Back to top">' +
     '<span class="code">' + esc(code) + '</span><div style="min-width:0">' +
     '<h3 class="card-title">' + hi(s.title, f.q) + '</h3><div class="card-meta">' +
     (s.room ? '<span class="room">' + esc(roomLabel(s.room)) + (roomLevel(s.room) ? ' &middot; ' + esc(roomLevel(s.room)) : '') + '</span>' : '') +
     (themeTag ? '<span>' + themeTag + '</span>' : '') +
     '</div></div></div>'];
-  g.talks.forEach(function (t) {
+  talks.forEach(function (t) {
     out.push(talkRowHTML({ talk: t, session: s }, f, false));
   });
   out.push('</article>');
@@ -770,18 +793,20 @@ function startUpNextTimer() {
 }
 function updatePersonalUI() {
   document.documentElement.classList.toggle('site-personal', CROSS_DEVICE_SYNC);
+  document.documentElement.classList.toggle('site-staging', STAGING_SITE);
   if (CROSS_DEVICE_SYNC) {
     var theme = document.querySelector('meta[name="theme-color"]');
     if (theme) theme.content = '#3d2067';
   }
+  var banner = el('stagingBanner');
+  if (banner) banner.hidden = !STAGING_SITE;
   var tab = el('upnextTab');
-  if (tab) tab.hidden = !CROSS_DEVICE_SYNC;
+  if (tab) tab.hidden = !ENHANCED_UI;
   updateProgLayoutUI();
 }
 function updateProgLayoutUI() {
   var wrap = el('progLayoutWrap');
   if (!wrap) return;
-  wrap.hidden = !CROSS_DEVICE_SYNC;
   var layout = programmeLayout();
   wrap.querySelectorAll('.prog-layout-btn').forEach(function (btn) {
     var on = btn.dataset.layout === layout;
@@ -1548,7 +1573,7 @@ function toggle(sid) {
   // sluggish on a phone. Patch the affected rows in place instead, and only
   // re-render when the toggle actually changes which rows belong on screen.
   if (VIEW === 'mine' || VIEW === 'upnext' || el('onlyMine').checked ||
-      (VIEW === 'programme' && CROSS_DEVICE_SYNC && programmeLayout() === 'time')) {
+      (VIEW === 'programme' && programmeLayout() === 'time')) {
     render(); return;
   }
 
@@ -1618,6 +1643,11 @@ function wire() {
     if (star) { e.stopPropagation(); toggle(star.dataset.sid); return; }
     var row = e.target.closest('[data-talk]');
     if (row) { openTalk(row.dataset.talk); return; }
+    var scrollHead = e.target.closest('.block-head, .card-head, .time-slot-head, .brand');
+    if (scrollHead) {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      return;
+    }
     var tab = e.target.closest('.day-tab');
     if (tab) { setDay(tab.dataset.day); return; }
     var vt = e.target.closest('.view-tab');
@@ -1646,6 +1676,8 @@ function wire() {
   // keyboard: talk rows behave like buttons
   document.addEventListener('keydown', function (e) {
     if (e.key !== 'Enter' && e.key !== ' ') return;
+    var scrollHead = e.target.closest && e.target.closest('.block-head, .card-head, .time-slot-head, .brand');
+    if (scrollHead) { e.preventDefault(); window.scrollTo({ top: 0, behavior: 'smooth' }); return; }
     var row = e.target.closest && e.target.closest('[data-talk]');
     if (row && !e.target.closest('.star')) { e.preventDefault(); openTalk(row.dataset.talk); }
   });
@@ -1703,6 +1735,7 @@ function wire() {
   var t;
   el('q').addEventListener('input', function () {
     el('qClear').hidden = !el('q').value;
+    if (el('q').value.trim() && ABSTRACTS_STATE === 'idle') loadAbstracts();
     clearTimeout(t); t = setTimeout(render, 160);
   });
   el('qClear').addEventListener('click', function () {
@@ -1714,6 +1747,7 @@ function wire() {
   el('onlyNotes').addEventListener('change', render);
   el('onlyRevisit').addEventListener('change', render);
   el('onlyContact').addEventListener('change', render);
+  if (el('hidePast')) el('hidePast').addEventListener('change', render);
   var progLayout = el('progLayoutWrap');
   if (progLayout) {
     progLayout.addEventListener('click', function (e) {
@@ -1775,7 +1809,7 @@ function daysWithTalks() {
    has talks. Sunday is registration + welcome only, so defaulting to it would
    show an empty programme. */
 function pickInitialDay() {
-  var today = new Date().toISOString().slice(0, 10);
+  var today = venueNow().date;
   var has = daysWithTalks();
   if (has[today]) return today;
   var next = DATA.days.filter(function (x) { return x.date >= today && has[x.date]; })[0];
