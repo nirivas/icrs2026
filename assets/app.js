@@ -25,7 +25,11 @@ var LS_HELP = 'icrs2026.helpSeen';
 var LS_SYNC_ROOM = 'icrs2026.syncRoom';
 var LS_SYNC_AT = 'icrs2026.syncAt';
 var LS_PROG_LAYOUT = 'icrs2026.progLayout';
-var CROSS_DEVICE_SYNC = /orlando-code\.github\.io$/i.test(location.hostname);
+var LS_NOTICE = 'icrs2026.noticeSeen';
+var SITE_MODE = window.ICRS_SITE_MODE || 'public';
+var STAGING_SITE = SITE_MODE === 'staging';
+var ENHANCED_UI = SITE_MODE !== 'public';
+var CROSS_DEVICE_SYNC = SITE_MODE === 'personal' || SITE_MODE === 'staging';
 var SYNC_URL = (window.ICRS_SYNC_URL || '').replace(/\/$/, '');
 var CLOUD_SYNC = CROSS_DEVICE_SYNC && !!SYNC_URL;
 var SYNC_WORDS = ['coral', 'reef', 'tide', 'kelp', 'shell', 'wave', 'fin', 'bay', 'manta', 'nemo'];
@@ -402,7 +406,7 @@ function talkRowHTML(r, f, flat) {
     starSVG(on) + '</button></div>';
 }
 function renderProgramme() {
-  if (CROSS_DEVICE_SYNC && programmeLayout() === 'time') {
+  if (ENHANCED_UI && programmeLayout() === 'time') {
     renderProgrammeByTime();
     return;
   }
@@ -770,18 +774,21 @@ function startUpNextTimer() {
 }
 function updatePersonalUI() {
   document.documentElement.classList.toggle('site-personal', CROSS_DEVICE_SYNC);
+  document.documentElement.classList.toggle('site-staging', STAGING_SITE);
   if (CROSS_DEVICE_SYNC) {
     var theme = document.querySelector('meta[name="theme-color"]');
     if (theme) theme.content = '#3d2067';
   }
+  var banner = el('stagingBanner');
+  if (banner) banner.hidden = !STAGING_SITE;
   var tab = el('upnextTab');
-  if (tab) tab.hidden = !CROSS_DEVICE_SYNC;
+  if (tab) tab.hidden = !ENHANCED_UI;
   updateProgLayoutUI();
 }
 function updateProgLayoutUI() {
   var wrap = el('progLayoutWrap');
   if (!wrap) return;
-  wrap.hidden = !CROSS_DEVICE_SYNC;
+  wrap.hidden = !ENHANCED_UI;
   var layout = programmeLayout();
   wrap.querySelectorAll('.prog-layout-btn').forEach(function (btn) {
     var on = btn.dataset.layout === layout;
@@ -1510,6 +1517,22 @@ function maybeShowHelp() {
   try { seen = localStorage.getItem(LS_HELP); } catch (e) {}
   if (!seen && !el('helpDlg').open && !el('profileDlg').open) openHelp();
 }
+function showNotice() {
+  var box = el('notice');
+  if (!box) return;
+  box.style.display = '';
+  var seen;
+  try { seen = localStorage.getItem(LS_NOTICE); } catch (e) {}
+  if (seen) return;
+  box.hidden = false;
+}
+function dismissNotice() {
+  var box = el('notice');
+  if (!box) return;
+  box.hidden = true;
+  box.style.display = 'none';
+  try { localStorage.setItem(LS_NOTICE, '1'); } catch (e) {}
+}
 
 function renderProfileList() {
   var list = profiles();
@@ -1548,7 +1571,7 @@ function toggle(sid) {
   // sluggish on a phone. Patch the affected rows in place instead, and only
   // re-render when the toggle actually changes which rows belong on screen.
   if (VIEW === 'mine' || VIEW === 'upnext' || el('onlyMine').checked ||
-      (VIEW === 'programme' && CROSS_DEVICE_SYNC && programmeLayout() === 'time')) {
+      (VIEW === 'programme' && ENHANCED_UI && programmeLayout() === 'time')) {
     render(); return;
   }
 
@@ -1656,6 +1679,7 @@ function wire() {
   el('helpDlg').addEventListener('click', function (ev) {
     if (ev.target === el('helpDlg')) closeHelp();
   });
+  if (el('noticeClose')) el('noticeClose').addEventListener('click', dismissNotice);
 
   el('talkClose').addEventListener('click', closeTalk);
   el('talkDlg').addEventListener('close', function () { OPEN_SID = null; });
@@ -1796,6 +1820,7 @@ function boot() {
       el('capturedAt').textContent = d.meta.capturedAt;
       buildFilters();
       wire();
+      showNotice();
 
       var list = profiles();
       var cur = '';
