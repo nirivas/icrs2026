@@ -197,6 +197,10 @@ select{
 .room{background:var(--bg);border:1px solid var(--line);border-radius:5px;padding:1px 6px;font-weight:600;color:var(--ink-2)}
 .card[data-kind="poster"] .code{background:var(--sun)}
 .card[data-kind="plenary"] .code,.card[data-kind="special"] .code{background:var(--coral)}
+.card.is-past,.talk.time-row.is-past{
+  opacity:.5;
+}
+.card.is-past .code,.talk.time-row.is-past .t-time{color:var(--ink-3)}
 
 /* talk row */
 .talk{display:flex;gap:9px;padding:8px 11px;border-top:1px solid var(--line);align-items:flex-start}

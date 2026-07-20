@@ -387,7 +387,8 @@ function talkMetaHTML(s) {
 function talkRowHTML(r, f, flat) {
   var t = r.talk;
   var on = PICKS.has(t.sid);
-  return '<div class="talk' + (flat ? ' time-row' : '') + (on ? ' is-on' : '') + '" data-talk="' + t.sid +
+  var past = flat && venueSlotEnded(r.session.date, t.end);
+  return '<div class="talk' + (flat ? ' time-row' : '') + (on ? ' is-on' : '') + (past ? ' is-past' : '') + '" data-talk="' + t.sid +
     '" tabindex="0" role="button" aria-label="Open details">' +
     '<span class="t-time">' + hhmm(t.start) + '</span>' +
     '<div class="t-body"><div class="t-title">' + hi(t.title, f.q) + '</div>' +
@@ -543,12 +544,19 @@ function dayShort(date) {
   var d = DATA.days.find(function (x) { return x.date === date; });
   return d ? d.label.slice(0, 3) + ' ' + (+date.slice(8, 10)) : date;
 }
+function venueSlotEnded(date, endTime, now) {
+  now = now || venueNow();
+  if (date < now.date) return true;
+  if (date > now.date) return false;
+  return mins(endTime) <= now.mins;
+}
 
 function cardHTML(g, f) {
   var s = g.s;
+  var past = venueSlotEnded(s.date, s.end);
   var code = s.code ? s.code : (s.kind === 'poster' ? 'POSTER' : s.kind === 'plenary' ? 'PLENARY' : 'EVENT');
   var themeTag = s.theme ? '#' + s.theme : '';
-  var out = ['<article class="card" data-kind="' + s.kind + '"><div class="card-head">' +
+  var out = ['<article class="card' + (past ? ' is-past' : '') + '" data-kind="' + s.kind + '"><div class="card-head">' +
     '<span class="code">' + esc(code) + '</span><div style="min-width:0">' +
     '<h3 class="card-title">' + hi(s.title, f.q) + '</h3><div class="card-meta">' +
     (s.room ? '<span class="room">' + esc(roomLabel(s.room)) + (roomLevel(s.room) ? ' &middot; ' + esc(roomLevel(s.room)) : '') + '</span>' : '') +
