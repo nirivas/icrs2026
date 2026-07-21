@@ -192,9 +192,15 @@ def presenter_of(pres):
     return "", "", "", ""
 
 
-def main():
-    data = load()
+def build(data):
+    """Transform the raw API payload into the two output structures. No I/O.
 
+    check_programme.py imports this so its diff sees exactly what a rebuild
+    would write -- AM/PM repairs and whitespace collapsing included. Diffing
+    the raw feed directly invents changes no rebuild would ever produce: the
+    repaired 2:30 AM slots come back, and stray upstream double spaces look
+    like retitles.
+    """
     days_seen = {}
     rooms = {}
     sessions = []
@@ -342,6 +348,13 @@ def main():
         "events": events,
     }
 
+    return out, abstracts, {"unresolved": unresolved, "repairs": repairs}
+
+
+def main():
+    out, abstracts, stats = build(load())
+    sessions, events = out["sessions"], out["events"]
+
     os.makedirs(os.path.dirname(OUT), exist_ok=True)
     with open(OUT, "w", encoding="utf-8") as f:
         json.dump(out, f, ensure_ascii=False, separators=(",", ":"))
@@ -351,19 +364,21 @@ def main():
     coded = [s for s in sessions if s["kind"] == "session"]
     talk_count = sum(len(s["talks"]) for s in coded)
     with_abs = sum(1 for s in coded for t in s["talks"] if t["hasAbstract"])
-    print("days:              %d" % len(days))
-    print("rooms:             %d" % len(room_list))
+    print("days:              %d" % len(out["days"]))
+    print("rooms:             %d" % len(out["rooms"]))
     print("coded sessions:    %d  (expect 223)" % len(coded))
-    print("talks in sessions: %d  (expect 1480)" % talk_count)
+    # the talk count drifts as presenters withdraw mid-conference, so there is
+    # no stable "expect" to print -- verify_programme.py asserts a band instead
+    print("talks in sessions: %d" % talk_count)
     print("posters:           %d" % sum(len(s["talks"]) for s in sessions if s["kind"] == "poster"))
     print("plenaries:         %d" % sum(1 for s in sessions if s["kind"] == "plenary"))
     print("special sessions:  %d" % sum(1 for s in sessions if s["kind"] == "special"))
     print("other events:      %d" % len(events))
-    print("presenter unresolved: %d" % len(unresolved))
-    for u in unresolved[:10]:
+    print("presenter unresolved: %d" % len(stats["unresolved"]))
+    for u in stats["unresolved"][:10]:
         print("   !", u)
-    print("AM/PM typos repaired in source data: %d" % len(repairs))
-    for r in repairs:
+    print("AM/PM typos repaired in source data: %d" % len(stats["repairs"]))
+    for r in stats["repairs"]:
         print("   ~", r)
     print("talks with an abstract: %d / %d" % (with_abs, talk_count))
     print("abstracts total (incl. posters/plenaries): %d" % len(abstracts))
