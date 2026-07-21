@@ -47,6 +47,47 @@ function esc(s) {
   });
 }
 function mins(t) { var p = String(t).split(':'); return +p[0] * 60 + +p[1]; }
+
+/* ---------- "now", in venue time ----------
+   The programme is in Auckland time, so "now" must be too. Using the device's
+   clock would show someone planning from Miami a completely different day to
+   someone standing in the venue -- and the old toISOString() approach reported
+   the UTC date, which in Auckland (UTC+12) is still yesterday for most of the
+   local day, opening the app on the wrong day at the conference itself. */
+var NOW_OVERRIDE = null;   // ?now=YYYY-MM-DDTHH:MM -- testing aid only
+(function () {
+  var m = (location.search || '').match(/[?&]now=(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2})/);
+  if (m) NOW_OVERRIDE = { date: m[1], mins: +m[2] * 60 + +m[3] };
+})();
+
+function nowNZ() {
+  if (NOW_OVERRIDE) return NOW_OVERRIDE;
+  try {
+    var p = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Pacific/Auckland', hour12: false,
+      year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit'
+    }).formatToParts(new Date()).reduce(function (a, x) { a[x.type] = x.value; return a; }, {});
+    return {
+      date: p.year + '-' + p.month + '-' + p.day,
+      mins: (+p.hour % 24) * 60 + (+p.minute)
+    };
+  } catch (e) {
+    // Intl timeZone unsupported: fall back to a fixed +12 (NZST, correct for July)
+    var d = new Date(Date.now() + NZ_OFFSET * 3600000);
+    return { date: d.toISOString().slice(0, 10), mins: d.getUTCHours() * 60 + d.getUTCMinutes() };
+  }
+}
+
+/* A talk is past once it has finished. `grace` (minutes) lets My schedule keep
+   a just-finished talk in Upcoming for a while. */
+function isPastTalk(session, talk, grace) {
+  var n = nowNZ();
+  if (session.date < n.date) return true;
+  if (session.date > n.date) return false;
+  return n.mins > mins(talk.end) + (grace || 0);
+}
+function isPastDay(date) { return date < nowNZ().date; }
 function hhmm(t) {
   var p = String(t).split(':'), h = +p[0], m = p[1];
   var ap = h >= 12 ? 'pm' : 'am', h12 = h % 12 || 12;
@@ -514,6 +555,8 @@ function renderFlatTime(recs, evts, f) {
     return a.date.localeCompare(b.date) || mins(a.start) - mins(b.start);
   });
 
+  // the first group that has not finished is "now" -- what to scroll to
+  var nowMarked = false;
   var shown = 0, capped = false, html = [];
   entries.forEach(function (en) {
     if (capped) return;
@@ -531,12 +574,19 @@ function renderFlatTime(recs, evts, f) {
     if (picked) extra.push('<b class="sum-pick">' + picked + ' picked</b>');
     if (noted) extra.push('<b class="sum-note">' + noted + ' noted</b>');
 
-    html.push('<section class="tgroup' + (g.poster ? ' is-poster' : '') + '" data-group="' + esc(g.id) + '"' +
+    // a group is past only when every talk in it has finished
+    var groupPast = g.rows.every(function (r) { return isPastTalk(r.session, r.talk, 0); });
+    var isNow = false;
+    if (!groupPast && !nowMarked && g.date === nowNZ().date) { isNow = true; nowMarked = true; }
+
+    html.push('<section class="tgroup' + (g.poster ? ' is-poster' : '') + (groupPast ? ' is-past' : '') +
+      '" data-group="' + esc(g.id) + '"' + (isNow ? ' data-now="1"' : '') +
       (open ? '' : ' data-collapsed="1"') + '>' +
       '<div class="tgroup-head" data-collapse="' + esc(g.id) + '" data-default="' + (g.poster ? '1' : '') + '" ' +
       'role="button" tabindex="0" aria-expanded="' + open + '" aria-label="' +
       (open ? 'Collapse' : 'Expand') + ' ' + hhmm(g.start) + '">' +
       '<span class="tgroup-time">' + (DAY === 'all' ? dayShort(g.date) + ' &middot; ' : '') + hhmm(g.start) + '</span>' +
+      (isNow ? '<span class="now-badge">now</span>' : '') +
       (g.poster ? '<span class="tgroup-tag">' + esc(g.session.title) + '</span>' : '') +
       '<span class="block-line"></span>' +
       '<span class="tgroup-n">' + n + ' ' + word + (extra.length ? ' &middot; ' + extra.join(' &middot; ') : '') + '</span>' +
@@ -596,7 +646,8 @@ function cardHTML(g, f) {
   if (picked) summary.push('<b class="sum-pick">' + picked + ' picked</b>');
   if (noted) summary.push('<b class="sum-note">' + noted + ' noted</b>');
 
-  var out = ['<article class="card" data-kind="' + s.kind + '" data-sess="' + esc(s.id) + '"' +
+  var sessPast = g.talks.every(function (t) { return isPastTalk(s, t, 0); });
+  var out = ['<article class="card' + (sessPast ? ' is-past' : '') + '" data-kind="' + s.kind + '" data-sess="' + esc(s.id) + '"' +
     ' data-group="' + esc(s.id) + '"' + (open ? '' : ' data-collapsed="1"') + '>' +
     '<div class="card-head" data-collapse="' + esc(s.id) + '" role="button" tabindex="0" ' +
     'aria-expanded="' + open + '" aria-label="' + (open ? 'Collapse' : 'Expand') + ' session">' +
@@ -630,7 +681,8 @@ function talkRowHTML(t, s, f, withWhere) {
     else if (s.kind === 'poster') bits.push('<span class="row-sess">Poster</span>');
     where = bits.length ? '<div class="t-where">' + bits.join('') + '</div>' : '';
   }
-  return '<div class="talk' + (on ? ' is-on' : '') + '" data-talk="' + t.sid +
+  return '<div class="talk' + (on ? ' is-on' : '') + (isPastTalk(s, t, 0) ? ' is-past' : '') +
+    '" data-talk="' + t.sid +
     '" tabindex="0" role="button" aria-label="Open details">' +
     '<span class="t-time">' + hhmm(t.start) + '</span>' +
     '<div class="t-body"><div class="t-title">' + hi(t.title, f.q) + '</div>' +
@@ -706,20 +758,29 @@ function findClashes(list) {
   return clash;
 }
 
-function renderMine() {
-  var list = myPicks();
-  if (!list.length) {
-    el('content').innerHTML = '<div class="empty"><h3>No talks picked yet</h3>' +
-      '<p>Open <b>Programme</b> and tap the star next to any talk to build your schedule.</p></div>';
-    return;
-  }
-  var clash = findClashes(list);
-  var html = [];
-  if (clash.size) {
-    html.push('<div class="note"><b>' + clash.size + ' of your ' + list.length +
-      ' picks overlap.</b> They are marked below — you cannot attend both.</div>');
-  }
-  var lastDay = null, prev = null;
+var PAST_GRACE = 30;   // a finished talk stays in Upcoming for this many minutes
+
+function mineRowHTML(r, clash, past) {
+  var c = clash.get(r.talk.sid);
+  return '<div class="mine-row' + (c ? ' clash' : '') + (past ? ' is-past' : '') +
+    '" data-talk="' + r.talk.sid + '" tabindex="0" role="button" aria-label="Open details">' +
+    '<span class="m-time">' + hhmm(r.talk.start) + '–' + hhmm(r.talk.end) + '</span>' +
+    '<div class="m-body"><div class="m-title">' + esc(r.talk.title) + '</div>' +
+    '<div class="m-meta">' + esc(roomLabel(r.session.room)) +
+    (roomLevel(r.session.room) ? ' &middot; ' + esc(roomLevel(r.session.room)) : '') +
+    (r.session.code ? ' &middot; ' + esc(r.session.code) : '') +
+    ' &middot; ' + esc((r.talk.honorific ? r.talk.honorific + ' ' : '') + r.talk.presenter) + '</div>' +
+    (c ? '<div class="clash-tag">⚠ Overlaps ' + esc(c[0].talk.title.slice(0, 40)) +
+         (c.length > 1 ? ' +' + (c.length - 1) + ' more' : '') + '</div>' : '') +
+    noteBadgesHTML(r.talk.sid) +
+    '</div>' +
+    '<button class="star" data-sid="' + r.talk.sid + '" aria-pressed="true" aria-label="Remove from my schedule">' +
+    starSVG(true) + '</button></div>';
+}
+
+/* Group a list of picks by day, with gap notes between consecutive talks. */
+function mineDaysHTML(list, clash, past) {
+  var html = [], lastDay = null, prev = null;
   list.forEach(function (r) {
     if (r.session.date !== lastDay) {
       lastDay = r.session.date; prev = null;
@@ -731,24 +792,58 @@ function renderMine() {
       var gap = mins(r.talk.start) - mins(prev.talk.end);
       if (gap >= 20) html.push('<p class="gap-note">' + gap + ' min gap</p>');
     }
-    var c = clash.get(r.talk.sid);
-    html.push('<div class="mine-row' + (c ? ' clash' : '') + '" data-talk="' + r.talk.sid +
-      '" tabindex="0" role="button" aria-label="Open details">' +
-      '<span class="m-time">' + hhmm(r.talk.start) + '–' + hhmm(r.talk.end) + '</span>' +
-      '<div class="m-body"><div class="m-title">' + esc(r.talk.title) + '</div>' +
-      '<div class="m-meta">' + esc(roomLabel(r.session.room)) +
-      (roomLevel(r.session.room) ? ' &middot; ' + esc(roomLevel(r.session.room)) : '') +
-      (r.session.code ? ' &middot; ' + esc(r.session.code) : '') +
-      ' &middot; ' + esc((r.talk.honorific ? r.talk.honorific + ' ' : '') + r.talk.presenter) + '</div>' +
-      (c ? '<div class="clash-tag">⚠ Overlaps ' + esc(c[0].talk.title.slice(0, 40)) +
-           (c.length > 1 ? ' +' + (c.length - 1) + ' more' : '') + '</div>' : '') +
-      noteBadgesHTML(r.talk.sid) +
-      '</div>' +
-      '<button class="star" data-sid="' + r.talk.sid + '" aria-pressed="true" aria-label="Remove from my schedule">' +
-      starSVG(true) + '</button></div>');
+    html.push(mineRowHTML(r, clash, past));
     prev = r;
   });
+  return html.join('');
+}
+
+function renderMine() {
+  var list = myPicks();
+  if (!list.length) {
+    el('content').innerHTML = '<div class="empty"><h3>No talks picked yet</h3>' +
+      '<p>Open <b>Programme</b> and tap the star next to any talk to build your schedule.</p></div>';
+    return;
+  }
+  // A talk moves to Past 30 minutes after it ends, so a just-finished one stays
+  // in view while you are still in the room or writing it up.
+  var upcoming = [], past = [];
+  list.forEach(function (r) {
+    (isPastTalk(r.session, r.talk, PAST_GRACE) ? past : upcoming).push(r);
+  });
+
+  var html = [];
+  // clashes only matter for talks you can still attend
+  var clash = findClashes(upcoming);
+  if (clash.size) {
+    html.push('<div class="note"><b>' + clash.size + ' of your upcoming picks overlap.</b> ' +
+      'They are marked below — you cannot attend both.</div>');
+  }
+
+  if (upcoming.length) {
+    html.push(mineDaysHTML(upcoming, clash, false));
+  } else {
+    html.push('<div class="empty"><h3>Nothing left to come</h3>' +
+      '<p>All ' + past.length + ' of your picks have finished. They are below.</p></div>');
+  }
+
+  if (past.length) {
+    var openPast = !isCollapsed('mine:past', true);   // collapsed by default
+    html.push('<section class="past-block' + (openPast ? '' : ' is-shut') + '" data-group="mine:past"' +
+      (openPast ? '' : ' data-collapsed="1"') + '>' +
+      '<div class="past-head" data-collapse="mine:past" data-default="1" role="button" tabindex="0" ' +
+      'aria-expanded="' + openPast + '">' +
+      '<span class="past-title">Past</span>' +
+      '<span class="block-line"></span>' +
+      '<span class="past-n">' + past.length + ' talk' + (past.length === 1 ? '' : 's') + '</span>' +
+      '<span class="chev" aria-hidden="true"><svg viewBox="0 0 24 24" width="16" height="16">' +
+      '<path fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" d="M6 9l6 6 6-6"/></svg></span>' +
+      '</div>' +
+      (openPast ? '<div class="past-rows">' + mineDaysHTML(past, new Map(), true) + '</div>' : '') +
+      '</section>');
+  }
   el('content').innerHTML = html.join('');
+  syncCollapseBtn();
 }
 
 /* ---------- talk detail ---------- */
@@ -1261,6 +1356,54 @@ function render() {
   else if (VIEW === 'share') renderShare();
   else renderProgramme();
 }
+
+/* Scroll to whatever is happening now. Only ever called on load and when the
+   user switches to today -- never from render(), which would yank the page out
+   from under someone who is scrolling. */
+/* Deliberately a timer, not requestAnimationFrame: rAF does not fire in a
+   backgrounded tab, so a tab opened in the background would never position
+   itself. scrollIntoView recomputes at call time, so it cannot be thrown off by
+   a measurement taken mid-render -- an earlier version measured too early and
+   dumped the page at the very bottom. Verify and retry, since layout can still
+   settle (fonts, late images) after the first attempt. */
+function scrollToNow(attempt) {
+  attempt = attempt || 0;
+  setTimeout(function () {
+    var mark = document.querySelector('[data-now="1"]');
+    if (!mark) return;
+    mark.scrollIntoView({ block: 'start' });
+    window.scrollBy(0, -96);              // clear the sticky top bar
+    if (attempt < 2) {
+      var top = mark.getBoundingClientRect().top;
+      if (top < 40 || top > 220) scrollToNow(attempt + 1);
+    }
+  }, attempt === 0 ? 60 : 250);
+}
+
+/* Keep "past" accurate while the app sits open, without ever interrupting.
+   Re-renders only when the picture actually changed, and never over a dialog. */
+var LAST_NOW_KEY = null;
+function nowKey() {
+  var n = nowNZ();
+  var k = n.date + ':';
+  TALKS.forEach(function (r) {
+    if (r.session.date === n.date && n.mins > mins(r.talk.end) - 1 && n.mins < mins(r.talk.end) + 61) k += r.talk.sid;
+  });
+  return k + Math.floor(n.mins / 5);   // 5-minute resolution is plenty
+}
+function startNowTicker() {
+  LAST_NOW_KEY = nowKey();
+  setInterval(function () {
+    if (NOW_OVERRIDE) return;                        // frozen clock while testing
+    var k = nowKey();
+    if (k === LAST_NOW_KEY) return;                  // nothing moved into the past
+    LAST_NOW_KEY = k;
+    if (el('talkDlg').open || el('profileDlg').open || el('helpDlg').open) return;  // don't interrupt
+    var y = window.pageYOffset;
+    render();
+    window.scrollTo(0, y);                           // keep the reader where they were
+  }, 60000);
+}
 function toggle(sid) {
   if (PICKS.has(sid)) PICKS.delete(sid); else PICKS.add(sid);
   savePicks();
@@ -1314,6 +1457,8 @@ function setDay(d) {
     b.classList.toggle('is-on', b.dataset.day === d);
   });
   render();
+  // landing on today should put you at the current time, not the top of the day
+  if (d === nowNZ().date) scrollToNow();
 }
 function setView(v) {
   VIEW = v;
@@ -1471,7 +1616,7 @@ function daysWithTalks() {
    has talks. Sunday is registration + welcome only, so defaulting to it would
    show an empty programme. */
 function pickInitialDay() {
-  var today = new Date().toISOString().slice(0, 10);
+  var today = nowNZ().date;      // venue time, not UTC and not the device's zone
   var has = daysWithTalks();
   if (has[today]) return today;
   var next = DATA.days.filter(function (x) { return x.date >= today && has[x.date]; })[0];
@@ -1506,10 +1651,14 @@ function boot() {
       var imported = importFromHash();
       setDay(pickInitialDay());
       setView('programme');
+      // setView() resets scroll to the top, so position on "now" after it
+      if (DAY === nowNZ().date) scrollToNow();
       if (!PROFILE && !imported) openProfile(true);
       // if a profile already exists (returning user, or opened via a share link),
       // show the guide once. New users get it after entering their name instead.
       else maybeShowHelp();
+
+      startNowTicker();
 
       // Warm the abstracts once the programme is on screen, so opening a talk is
       // instant and everything is cached for offline use at the venue.

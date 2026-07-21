@@ -54,6 +54,33 @@ a{color:var(--teal)}
 a.round-btn{text-decoration:none}
 .cv-text{font-size:11px;font-weight:800;letter-spacing:.5px;line-height:1}
 
+/* past / now ---------------------------------------------------------------
+   Finished talks are dimmed but stay fully usable -- you may still want to open
+   one and write it up afterwards. */
+.talk.is-past,.mine-row.is-past{opacity:.5}
+.talk.is-past:hover,.mine-row.is-past:hover{opacity:.8}
+.card.is-past .card-head,.tgroup.is-past .tgroup-head{opacity:.55}
+.tgroup.is-past .tgroup-time{color:var(--ink-3)}
+.now-badge{
+  flex:none;background:var(--coral);color:#fff;border-radius:999px;
+  padding:2px 9px;font-size:10.5px;font-weight:800;letter-spacing:.5px;
+  text-transform:uppercase;box-shadow:0 0 0 3px color-mix(in srgb,var(--coral) 18%,transparent);
+}
+.tgroup[data-now="1"] .tgroup-time{color:var(--coral)}
+
+/* My schedule: the Past block */
+.past-block{margin:22px 0 8px}
+.past-head{
+  display:flex;align-items:center;gap:9px;padding:6px 0;cursor:pointer;
+  border-top:1px solid var(--line);margin-top:6px;
+}
+.past-head:hover .past-title{color:var(--ink-2)}
+.past-head:focus-visible{outline:2px solid var(--teal-2);outline-offset:2px;border-radius:6px}
+.past-title{font-weight:800;font-size:13px;color:var(--ink-3);text-transform:uppercase;letter-spacing:.6px}
+.past-n{font-size:11px;color:var(--ink-3);white-space:nowrap}
+.past-block[data-collapsed] .chev{transform:rotate(-90deg)}
+.past-rows .day-head{font-size:13px;color:var(--ink-2)}
+
 /* flat time view: groups of talks that start at the same minute */
 .tgroup{margin:14px 0 8px}
 .tgroup-head{
@@ -198,7 +225,10 @@ select{
   position:sticky;top:calc(50px + env(safe-area-inset-top));z-index:10;
   background:var(--bg);padding:5px 0;
 }
-.block-time{font-weight:700;font-size:13px;color:var(--teal);white-space:nowrap}
+/* Time headers are short, but Topic headers carry the full theme title (some are
+   150+ characters). nowrap forced those off the side of a phone screen, so let
+   them wrap and cap the width instead. */
+.block-time{font-weight:700;font-size:13px;color:var(--teal);min-width:0;overflow-wrap:anywhere;max-width:100%}
 .block-line{flex:1;height:1px;background:var(--line)}
 .block-n{font-size:11px;color:var(--ink-3)}
 

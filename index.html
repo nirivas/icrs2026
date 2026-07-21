@@ -172,6 +172,7 @@
 
       <h3 class="help-h">Handy extras</h3>
       <ul class="help-tips">
+        <li><span class="ti">🕘</span><div><b>It knows the time.</b> The app opens on the current day and scrolls to whatever is on <b>now</b> (in Auckland time, wherever you are). Finished talks are greyed out, and in <b>My schedule</b> a talk moves to <b>Past</b> 30 minutes after it ends.</div></li>
         <li><span class="ti">↕️</span><div><b>Sort and collapse.</b> Use <b>Sort</b> to group the day by time, room, session or topic. Tap any session header to fold it away, or <b>Collapse all</b> to see just the headers — collapsed sessions still show how many talks you've picked or noted inside.</div></li>
         <li><span class="ti">📅</span><div><b>Add to your calendar.</b> In My schedule, <b>Add to calendar (.ics)</b> downloads your picks with times, rooms and your notes.</div></li>
         <li><span class="ti">🔗</span><div><b>Share your schedule.</b> <b>Copy share link</b> moves starred talks to another device. <b>Notes are not included</b> &mdash; use Backup or Notes (.md) instead.</div></li>
@@ -223,5 +224,24 @@
 <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
 <script src="assets/app.js"></script>
+
+<!-- Anonymous visitor counter (GoatCounter): no cookies, no personal data, no
+     consent banner needed. It counts page views only -- picks and notes are
+     never sent anywhere.
+
+     Dashboard: https://nicorivas.goatcounter.com -->
+<script>
+(function () {
+  var CODE = 'nicorivas';                                  // GoatCounter site code
+  if (!CODE || CODE === 'YOURCODE') return;                // not configured: stay silent
+  if (navigator.doNotTrack === '1' || window.doNotTrack === '1') return;   // respect DNT
+  if (/^(localhost|127\.|\[::1\])/.test(location.hostname)) return;        // don't count dev
+  var s = document.createElement('script');
+  s.async = true;
+  s.src = 'https://gc.zgo.at/count.js';
+  s.setAttribute('data-goatcounter', 'https://' + CODE + '.goatcounter.com/count');
+  document.head.appendChild(s);
+})();
+</script>
 </body>
 </html>
