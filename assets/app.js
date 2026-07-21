@@ -1355,6 +1355,7 @@ function render() {
   if (VIEW === 'mine') renderMine();
   else if (VIEW === 'share') renderShare();
   else renderProgramme();
+  setTimeout(function () { syncNowBtn(); observeNow(); }, 80);   // after layout settles
 }
 
 /* Scroll to whatever is happening now. Only ever called on load and when the
@@ -1378,6 +1379,46 @@ function scrollToNow(attempt) {
       if (top < 40 || top > 220) scrollToNow(attempt + 1);
     }
   }, attempt === 0 ? 60 : 250);
+}
+
+/* The floating "Now" button. Only toggles a class -- it never re-renders, so it
+   cannot disturb anything you are reading or typing. */
+function syncNowBtn() {
+  var b = el('nowBtn');
+  if (!b) return;
+  var mark = VIEW === 'programme' ? document.querySelector('[data-now="1"]') : null;
+  var show = false;
+  if (mark) {
+    var top = mark.getBoundingClientRect().top;
+    show = top < -80 || top > window.innerHeight - 40;   // scrolled well away from now
+  } else if (VIEW === 'programme' && DATA && DAY !== nowNZ().date && daysWithTalks()[nowNZ().date]) {
+    show = true;    // on another day, but today has talks -> offer to jump back
+  }
+  b.hidden = !show;
+  b.classList.toggle('show', show);
+}
+function goToNow() {
+  var today = nowNZ().date;
+  if (VIEW !== 'programme') setView('programme');
+  if (DAY !== today && daysWithTalks()[today]) setDay(today);   // setDay already scrolls
+  else scrollToNow();
+  setTimeout(syncNowBtn, 700);
+}
+
+/* Two independent triggers on purpose. A button that never appears is exactly
+   the failure the user would notice, and scroll events are not guaranteed in
+   every webview/PWA shell -- so an IntersectionObserver on the "now" marker
+   covers the same job by a different route. Whichever fires, the decision is
+   made by the one syncNowBtn() above. */
+var NOW_IO = null;
+function observeNow() {
+  if (!('IntersectionObserver' in window)) return;
+  if (NOW_IO) NOW_IO.disconnect();
+  var mark = document.querySelector('[data-now="1"]');
+  if (!mark) return;
+  NOW_IO = new IntersectionObserver(function () { syncNowBtn(); },
+    { rootMargin: '-80px 0px -40px 0px' });
+  NOW_IO.observe(mark);
 }
 
 /* Keep "past" accurate while the app sits open, without ever interrupting.
@@ -1516,6 +1557,14 @@ function wire() {
     var row = e.target.closest && e.target.closest('[data-talk]');
     if (row && !e.target.closest('.star')) { e.preventDefault(); openTalk(row.dataset.talk); }
   });
+  el('nowBtn').addEventListener('click', goToNow);
+  // throttled: a scroll handler that ran per-frame on a 30,000px page would be wasteful
+  var nowTick = null;
+  window.addEventListener('scroll', function () {
+    if (nowTick) return;
+    nowTick = setTimeout(function () { nowTick = null; syncNowBtn(); }, 150);
+  }, { passive: true });
+
   el('fSort').addEventListener('change', function () { setSort(el('fSort').value); });
   el('btnCollapse').addEventListener('click', collapseAll);
   el('noticeClose').addEventListener('click', dismissNotice);

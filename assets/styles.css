@@ -169,9 +169,13 @@ a.round-btn{text-decoration:none}
 .controls-row{display:flex;gap:8px;flex-wrap:wrap}
 .search-wrap{position:relative;flex:1 1 100%;min-width:0}
 .search-icon{position:absolute;left:11px;top:50%;transform:translateY(-50%);color:var(--ink-3);pointer-events:none}
+/* 16px is the threshold below which iOS Safari zooms into a focused field.
+   Every text input sits at or above it so typing never yanks the page around.
+   Deliberately NOT solved with maximum-scale/user-scalable on the viewport:
+   that stops the zoom but also disables pinch-zoom for everyone. */
 #q{
   width:100%;padding:10px 34px;border:1px solid var(--line);border-radius:var(--r);
-  background:var(--panel);color:var(--ink);font:inherit;
+  background:var(--panel);color:var(--ink);font:inherit;font-size:16px;
 }
 #q:focus,select:focus,.filter-check:focus-within{outline:2px solid var(--teal-2);outline-offset:1px}
 .q-clear{
@@ -181,6 +185,11 @@ a.round-btn{text-decoration:none}
 select,.filter-check{
   min-height:38px;box-sizing:border-box;border:1px solid var(--line);border-radius:var(--r);
   background:var(--panel);color:var(--ink);font:inherit;font-size:13px;
+}
+/* Touch devices: selects also trip the iOS under-16px zoom, so lift them there
+   only -- on desktop the smaller text keeps the controls row compact. */
+@media (pointer: coarse){
+  select{font-size:16px}
 }
 select{
   flex:1 1 140px;padding:8px 10px;min-width:0;
@@ -368,7 +377,7 @@ mark{background:color-mix(in srgb,var(--sun) 45%,transparent);color:inherit;bord
 .dlg-in{padding:18px}
 .dlg h2{margin:0 0 4px;font-size:17px}
 .dlg-sub{margin:0 0 13px;font-size:12.5px;color:var(--ink-3);line-height:1.45}
-#nameInput{width:100%;padding:10px 12px;border:1px solid var(--line);border-radius:var(--r);background:var(--bg);color:var(--ink);font:inherit}
+#nameInput{width:100%;padding:10px 12px;border:1px solid var(--line);border-radius:var(--r);background:var(--bg);color:var(--ink);font:inherit;font-size:16px}
 #nameInput:focus{outline:2px solid var(--teal-2);outline-offset:1px}
 .profile-list{display:flex;flex-direction:column;gap:5px;margin-top:11px;max-height:180px;overflow:auto}
 .profile-row{display:flex;align-items:center;gap:8px;padding:7px 9px;border:1px solid var(--line);border-radius:9px;cursor:pointer;background:var(--bg);font-size:13px}
@@ -423,7 +432,7 @@ mark{background:color-mix(in srgb,var(--sun) 45%,transparent);color:inherit;bord
 .note-tag-btn.is-on[data-tag="contact"]{background:var(--coral);border-color:var(--coral);color:#fff}
 #noteText{
   width:100%;padding:10px 11px;border:1px solid var(--line);border-radius:var(--r);
-  background:var(--bg);color:var(--ink);font:inherit;font-size:13.5px;line-height:1.45;
+  background:var(--bg);color:var(--ink);font:inherit;font-size:16px;line-height:1.5;
   resize:vertical;min-height:88px;
 }
 #noteText:focus{outline:2px solid var(--teal-2);outline-offset:1px}
@@ -461,6 +470,24 @@ mark{background:color-mix(in srgb,var(--sun) 45%,transparent);color:inherit;bord
 .help-tips li>div{flex:1;font-size:13px;line-height:1.5;color:var(--ink-2)}
 .help-tips b{color:var(--ink)}
 .help-note{margin:16px 0 0;padding-top:12px;border-top:1px solid var(--line);font-size:11.5px;color:var(--ink-3);line-height:1.5}
+
+/* floating "jump to now" button -------------------------------------------
+   Appears only once the current-time group is scrolled out of view, so it never
+   sits there uselessly. Kept clear of the iOS home indicator, and comfortably
+   over the 44px tap minimum. */
+.now-fab{
+  position:fixed;right:14px;z-index:40;
+  bottom:calc(18px + env(safe-area-inset-bottom));
+  display:flex;align-items:center;gap:6px;
+  min-height:44px;padding:0 16px 0 13px;border:0;border-radius:999px;
+  background:var(--coral);color:#fff;font:inherit;font-size:13.5px;font-weight:800;
+  cursor:pointer;box-shadow:0 8px 22px -6px rgba(0,0,0,.5),0 0 0 1px rgba(255,255,255,.12) inset;
+  opacity:0;transform:translateY(10px);transition:opacity .18s,transform .18s;
+  pointer-events:none;-webkit-tap-highlight-color:transparent;
+}
+.now-fab.show{opacity:1;transform:translateY(0);pointer-events:auto}
+.now-fab:active{transform:scale(.95)}
+.now-fab:focus-visible{outline:2px solid var(--teal-2);outline-offset:3px}
 
 /* toast */
 .toast{
