@@ -50,7 +50,11 @@ def main():
 
     print("\n== structure ==")
     check(len(coded) == 223, "223 coded sessions (got %d)" % len(coded))
-    check(len(talks) == 1480, "1480 talks in sessions (got %d)" % len(talks))
+    # The talk count moves as presenters withdraw mid-conference (1480 on 15 Jul).
+    # Pinning an exact number just means re-editing this file after every refresh,
+    # so assert a sane band and report the actual figure instead.
+    check(1350 <= len(talks) <= 1550, "talk count within expected band (got %d)" % len(talks))
+    print("  note  %d talks in coded sessions (was 1480 at first capture on 2026-07-15)" % len(talks))
     check(len(d["rooms"]) == 14, "14 rooms (got %d)" % len(d["rooms"]))
     check(len(d["days"]) == 6, "6 days (got %d)" % len(d["days"]))
 
@@ -105,7 +109,7 @@ def main():
     allt = [t for s in sessions for t in s["talks"]]
     by_sid = {t["sid"]: t for t in allt}
     no_abs = [t["title"][:44] for t in talks if not t.get("hasAbstract")]
-    check(not no_abs, "all 1480 talks have an abstract (%d without)" % len(no_abs))
+    check(not no_abs, "every one of the %d talks has an abstract (%d without)" % (len(talks), len(no_abs)))
     for n in no_abs[:5]:
         print("       -", n)
     # a flag with no text behind it would render an empty panel in the app

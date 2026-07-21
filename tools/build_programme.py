@@ -23,6 +23,7 @@ Usage:
     python tools/build_programme.py --cache DIR     # where to keep the raw snapshot
 """
 
+import datetime
 import json
 import os
 import re
@@ -304,7 +305,6 @@ def main():
             })
 
     order = sorted(days_seen)
-    import datetime
     days = []
     for i, dt in enumerate(order):
         d = datetime.date.fromisoformat(dt)
@@ -330,7 +330,9 @@ def main():
             "longName": "15th International Coral Reef Symposium",
             "venue": "NZICC, Auckland, New Zealand",
             "timezone": "Pacific/Auckland",
-            "capturedAt": "2026-07-15",
+            # the real build date -- the footer shows this, so a stale literal
+            # here would tell people the data is fresher (or older) than it is
+            "capturedAt": datetime.date.today().isoformat(),
             "source": SITE,
             "note": "Programme is subject to change.",
         },
