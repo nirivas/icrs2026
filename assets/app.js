@@ -26,7 +26,7 @@ var LS_HELP = 'icrs2026.helpSeen';
 var LS_SORT = 'icrs2026.sort';
 var LS_COLLAPSED = 'icrs2026.collapsed';
 var LS_NOTICE = 'icrs2026.noticeSeen';
-var LS_THANKS = 'icrs2026.thanksSeen';
+var LS_THANKS = 'icrs2026.thanksSeen2';   // bumped from thanksSeen to re-show the updated banner once
 var NZ_OFFSET = 12;          // Auckland is UTC+12 (NZST) for 19-24 July 2026
 var SORT = 'time';
 /* Explicit user collapse choices only: { id: true|false }. An id that is absent
