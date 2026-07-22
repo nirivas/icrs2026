@@ -136,6 +136,14 @@ a.round-btn{text-decoration:none}
   background:color-mix(in srgb,var(--coral) 12%,var(--panel));
   border-color:color-mix(in srgb,var(--coral) 40%,transparent);
 }
+.notice.is-thanks{
+  background:color-mix(in srgb,var(--teal-2) 12%,var(--panel));
+  border-color:color-mix(in srgb,var(--teal-2) 40%,transparent);
+}
+.notice.is-thanks a{color:var(--teal-2);font-weight:700}
+#supportDlg a{color:var(--teal-2);font-weight:700}
+.support-links{margin:.5em 0 0;padding-left:1.1em}
+.support-links li{margin:.15em 0}
 .profile-chip>span:last-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .avatar{
   width:24px;height:24px;border-radius:50%;background:var(--coral);color:#fff;

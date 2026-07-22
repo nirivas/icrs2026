@@ -26,6 +26,7 @@ var LS_HELP = 'icrs2026.helpSeen';
 var LS_SORT = 'icrs2026.sort';
 var LS_COLLAPSED = 'icrs2026.collapsed';
 var LS_NOTICE = 'icrs2026.noticeSeen';
+var LS_THANKS = 'icrs2026.thanksSeen';
 var NZ_OFFSET = 12;          // Auckland is UTC+12 (NZST) for 19-24 July 2026
 var SORT = 'time';
 /* Explicit user collapse choices only: { id: true|false }. An id that is absent
@@ -1331,6 +1332,36 @@ function dismissNotice() {
   try { localStorage.setItem(LS_NOTICE, '1'); } catch (e) {}
 }
 
+/* ---------- thank-you banner ----------
+   One-time only, independent of the storage notice above -- own key, own
+   dismissal, so the two don't interfere with each other. */
+function showThanksBanner() {
+  var box = el('thanksBox');
+  var seen;
+  try { seen = localStorage.getItem(LS_THANKS); } catch (e) {}
+  if (seen) return;
+  box.hidden = false;
+}
+function dismissThanksBanner() {
+  var box = el('thanksBox');
+  box.hidden = true;
+  box.style.display = 'none';
+  try { localStorage.setItem(LS_THANKS, '1'); } catch (e) {}
+}
+
+/* ---------- support dialog ----------
+   The same thank-you note as the banner, but reachable any time from the top
+   bar -- the banner only ever shows once, so this is where people find the CV
+   and tip links again afterwards. No storage: it is meant to reopen freely. */
+function openSupport() {
+  var dlg = el('supportDlg');
+  if (!dlg.open) dlg.showModal();
+}
+function closeSupport() {
+  var dlg = el('supportDlg');
+  if (dlg.open) dlg.close();
+}
+
 function renderProfileList() {
   var list = profiles();
   var box = el('profileList');
@@ -1568,12 +1599,20 @@ function wire() {
   el('fSort').addEventListener('change', function () { setSort(el('fSort').value); });
   el('btnCollapse').addEventListener('click', collapseAll);
   el('noticeClose').addEventListener('click', dismissNotice);
+  el('thanksClose').addEventListener('click', dismissThanksBanner);
   // how-to guide
   el('helpBtn').addEventListener('click', openHelp);
   el('helpClose').addEventListener('click', closeHelp);
   el('helpDone').addEventListener('click', closeHelp);
   el('helpDlg').addEventListener('click', function (ev) {
     if (ev.target === el('helpDlg')) closeHelp();
+  });
+  // support / thank-you note
+  el('supportBtn').addEventListener('click', openSupport);
+  el('supportClose').addEventListener('click', closeSupport);
+  el('supportDone').addEventListener('click', closeSupport);
+  el('supportDlg').addEventListener('click', function (ev) {
+    if (ev.target === el('supportDlg')) closeSupport();
   });
 
   el('talkClose').addEventListener('click', closeTalk);
@@ -1690,6 +1729,7 @@ function boot() {
       el('fSort').value = sortMode();
       wire();
       showNotice();
+      showThanksBanner();
 
       var list = profiles();
       var cur = '';
