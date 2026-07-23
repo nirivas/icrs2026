@@ -27,6 +27,7 @@ var LS_SORT = 'icrs2026.sort';
 var LS_COLLAPSED = 'icrs2026.collapsed';
 var LS_NOTICE = 'icrs2026.noticeSeen';
 var LS_THANKS = 'icrs2026.thanksSeen2';   // bumped from thanksSeen to re-show the updated banner once
+var LS_FAREWELL = 'icrs2026.farewellSeen';   // end-of-conference popup: one-time
 var NZ_OFFSET = 12;          // Auckland is UTC+12 (NZST) for 19-24 July 2026
 var SORT = 'time';
 /* Explicit user collapse choices only: { id: true|false }. An id that is absent
@@ -1362,6 +1363,163 @@ function closeSupport() {
   if (dlg.open) dlg.close();
 }
 
+/* ---------- farewell popup + PDF export ----------
+   A one-time end-of-conference note (LS_FAREWELL) carrying two PDF downloads;
+   the same downloads also live permanently in #mineControls. PDFs are produced
+   by building a print-only view into #printRoot and calling window.print() ->
+   "Save as PDF": no library, always reflects current data, and it renders
+   macrons / accents / italic species names that a bundled PDF font would not.
+   These builders are a third render path, deliberately independent of the
+   interactive talkRowHTML(). */
+function openFarewell() {
+  var dlg = el('farewellDlg');
+  if (!dlg.open) dlg.showModal();
+}
+function closeFarewell() {
+  var dlg = el('farewellDlg');
+  if (dlg.open) dlg.close();
+}
+function maybeShowFarewell() {
+  var seen;
+  try { seen = localStorage.getItem(LS_FAREWELL); } catch (e) {}
+  if (seen) return;
+  // Never stack two modals: showModal() on an already-open dialog throws, so a
+  // first-time visitor's auto help dialog wins and they get the farewell next
+  // load. Returning attendees (help already seen) get it now.
+  if (el('helpDlg').open || el('profileDlg').open || el('supportDlg').open || el('talkDlg').open) return;
+  try { localStorage.setItem(LS_FAREWELL, '1'); } catch (e) {}
+  openFarewell();
+}
+
+function prWho(t) {
+  var who = (t.honorific ? t.honorific + ' ' : '') + t.presenter +
+            (t.affiliation ? ' (' + t.affiliation + ')' : '');
+  var s = '<div class="pr-who">' + esc(who);
+  if (t.authors && t.authors.length > 1) {
+    s += ' <span class="pr-authors">· Authors: ' + esc(t.authors.join(', ')) + '</span>';
+  }
+  return s + '</div>';
+}
+function prTalkEntry(t, s, extra) {
+  var where = roomLabel(s.room) + (roomLevel(s.room) ? ', ' + roomLevel(s.room) : '') +
+              (s.code ? ' · ' + s.code : '');
+  return '<div class="pr-entry">' +
+    '<div class="pr-line"><span class="pr-when">' + hhmm(t.start) + '–' + hhmm(t.end) + '</span> · ' +
+    '<span class="pr-where">' + esc(where) + '</span></div>' +
+    '<div class="pr-title">' + esc(t.title) + '</div>' +
+    prWho(t) + (extra || '') + '</div>';
+}
+// Full-programme talk row: lighter than prTalkEntry -- the room lives in the
+// session-block header above it, so the row is just time · title · who.
+function prProgTalkRow(t) {
+  var who = (t.honorific ? t.honorific + ' ' : '') + t.presenter +
+            (t.affiliation ? ' (' + t.affiliation + ')' : '') +
+            ((t.authors && t.authors.length > 1) ? ' · Authors: ' + t.authors.join(', ') : '');
+  return '<div class="pr-trow"><span class="pr-when">' + hhmm(t.start) + '</span> ' +
+    '<span class="pr-ttitle">' + esc(t.title) + '</span> — ' +
+    '<span class="pr-twho">' + esc(who) + '</span></div>';
+}
+function prSessionBlock(s) {
+  var head = s.code ? 'Session ' + esc(s.code) + ' · ' + esc(s.title) : esc(s.title);
+  var sub = roomLabel(s.room) + (roomLevel(s.room) ? ', ' + roomLevel(s.room) : '') +
+            (s.start ? ' · ' + hhmm(s.start) + (s.end ? '–' + hhmm(s.end) : '') : '') +
+            (s.theme ? ' · #' + s.theme : '');
+  return '<section class="pr-sess"><div class="pr-sess-head">' + head + '</div>' +
+    '<div class="pr-sess-sub">' + esc(sub) + '</div>' +
+    s.talks.map(prProgTalkRow).join('') + '</section>';
+}
+function prDocHead(title, sub) {
+  return '<header class="pr-doc-head"><h1>' + esc(title) + '</h1>' +
+         '<p class="pr-sub">' + esc(sub) + '</p></header>';
+}
+
+function buildProgrammeHTML() {
+  var cap = (DATA.meta && DATA.meta.capturedAt) ? DATA.meta.capturedAt : '';
+  var html = ['<div class="pr-doc">' +
+    prDocHead('ICRS 2026 — Full programme',
+      '15th International Coral Reef Symposium · NZICC, Auckland · Times are Auckland (NZST)' +
+      (cap ? ' · programme as at ' + cap : ''))];
+  DATA.days.forEach(function (day) {
+    // Sessions grouped as blocks, ordered by session code. Kept: coded sessions
+    // + plenaries. Dropped: DATA.events (ceremonies, teas, lunch, banquet),
+    // posters, and the film-screening "special" sessions.
+    var blocks = DATA.sessions.filter(function (s) {
+      return s.date === day.date && (s.kind === 'session' || s.kind === 'plenary');
+    });
+    if (!blocks.length) return;
+    blocks.sort(function (a, b) {
+      // plenaries (no code) first, by start; then coded sessions by code
+      var ka = a.code ? '1_' + a.code : '0_' + (a.start || '');
+      var kb = b.code ? '1_' + b.code : '0_' + (b.start || '');
+      return ka < kb ? -1 : ka > kb ? 1 : 0;
+    });
+    html.push('<section class="pr-day"><h2>' + esc(dayLabelOf(day.date)) + '</h2>' +
+      blocks.map(prSessionBlock).join('') + '</section>');
+  });
+  html.push('</div>');
+  return html.join('');
+}
+
+function buildScheduleHTML() {
+  var list = myPicks();
+  var clash = findClashes(list);
+  var byDay = {};
+  list.forEach(function (r) { (byDay[r.session.date] = byDay[r.session.date] || []).push(r); });
+  var html = ['<div class="pr-doc">' +
+    prDocHead('ICRS 2026 — ' + PROFILE + '’s schedule',
+      list.length + ' talk' + (list.length === 1 ? '' : 's') +
+      ' · exported ' + new Date().toISOString().slice(0, 10) + ' · times are Auckland (NZST)')];
+  DATA.days.forEach(function (day) {
+    var rows = byDay[day.date];
+    if (!rows || !rows.length) return;
+    var body = rows.map(function (r) {
+      var t = r.talk, s = r.session, extra = '';
+      var cl = clash.get(t.sid);
+      if (cl && cl.length) {
+        extra += '<div class="pr-clash">Overlaps: ' +
+          esc(cl.map(function (o) { return o.talk.title; }).join('; ')) + '</div>';
+      }
+      if (t.hasAbstract && ABSTRACTS && ABSTRACTS[t.sid]) {
+        extra += '<div class="pr-abstract">' + abstractHTML(ABSTRACTS[t.sid]) + '</div>';
+      }
+      var note = getNote(t.sid), tags = [];
+      if (note.revisit) tags.push('revisit');
+      if (note.contact) tags.push('contact');
+      if ((note.text && note.text.trim()) || tags.length) {
+        extra += '<div class="pr-note">' +
+          (tags.length ? '<span class="pr-note-tags">[' + tags.join(', ') + ']</span> ' : '') +
+          (note.text ? esc(note.text) : '') + '</div>';
+      }
+      return prTalkEntry(t, s, extra);
+    }).join('');
+    html.push('<section class="pr-day"><h2>' + esc(dayLabelOf(day.date)) + '</h2>' + body + '</section>');
+  });
+  html.push('</div>');
+  return html.join('');
+}
+
+var PRINT_TITLE0 = null;
+function printHTML(title, html) {
+  el('printRoot').innerHTML = html;
+  if (PRINT_TITLE0 === null) PRINT_TITLE0 = document.title;   // filename hint for Save-as-PDF
+  document.title = title;
+  window.print();
+}
+function afterPrint() {
+  if (PRINT_TITLE0 !== null) { document.title = PRINT_TITLE0; PRINT_TITLE0 = null; }
+  el('printRoot').innerHTML = '';
+}
+function printFullProgramme() {
+  printHTML('ICRS 2026 Full Programme', buildProgrammeHTML());
+}
+function printMySchedule() {
+  if (!PICKS.size) { toast('Pick some talks first.'); return; }
+  // abstracts are lazy (~3.9 MB); make sure they're in before building the PDF
+  loadAbstracts().then(function () {
+    printHTML('My ICRS 2026 schedule', buildScheduleHTML());
+  });
+}
+
 function renderProfileList() {
   var list = profiles();
   var box = el('profileList');
@@ -1614,6 +1772,17 @@ function wire() {
   el('supportDlg').addEventListener('click', function (ev) {
     if (ev.target === el('supportDlg')) closeSupport();
   });
+  // farewell popup + PDF downloads (four buttons: two in the popup, two in My schedule)
+  el('farewellClose').addEventListener('click', closeFarewell);
+  el('farewellDone').addEventListener('click', closeFarewell);
+  el('farewellDlg').addEventListener('click', function (ev) {
+    if (ev.target === el('farewellDlg')) closeFarewell();
+  });
+  el('dlgPdfFull').addEventListener('click', printFullProgramme);
+  el('dlgPdfMine').addEventListener('click', printMySchedule);
+  el('btnPdfFull').addEventListener('click', printFullProgramme);
+  el('btnPdfMine').addEventListener('click', printMySchedule);
+  window.addEventListener('afterprint', afterPrint);
 
   el('talkClose').addEventListener('click', closeTalk);
   el('talkDlg').addEventListener('close', function () { OPEN_SID = null; });
@@ -1746,6 +1915,10 @@ function boot() {
       // if a profile already exists (returning user, or opened via a share link),
       // show the guide once. New users get it after entering their name instead.
       else maybeShowHelp();
+
+      // end-of-conference farewell, once. Called after the profile/help dialogs
+      // so it can bow out if one of them is already showing (no stacked modals).
+      maybeShowFarewell();
 
       startNowTicker();
 

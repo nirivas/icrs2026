@@ -119,6 +119,8 @@
 <div id="mineControls" class="wrap" hidden>
   <p class="mine-note">Picks and notes are stored in this browser only. Clearing site data removes them. Share links move picks between devices, not notes — use <b>Backup</b> / <b>Restore</b> for that.</p>
   <div class="mine-bar">
+    <button id="btnPdfMine" class="btn" type="button">My schedule (PDF)</button>
+    <button id="btnPdfFull" class="btn" type="button">Full programme (PDF)</button>
     <button id="btnShare" class="btn" type="button">Copy share link</button>
     <button id="btnIcs" class="btn" type="button">Add to calendar (.ics)</button>
     <button id="btnNotesMd" class="btn" type="button">Notes (.md)</button>
@@ -126,6 +128,7 @@
     <button id="btnRestore" class="btn btn-quiet" type="button">Restore</button>
     <button id="btnClear" class="btn btn-quiet" type="button">Clear picks</button>
   </div>
+  <p class="mine-note">The PDF buttons open your print dialog — choose <b>Save as PDF</b>. On iPhone, tap the <b>Share icon</b> in the print preview, then <b>Save to Files</b>.</p>
   <input id="restoreFile" type="file" accept="application/json,.json" hidden>
 </div>
 
@@ -242,6 +245,39 @@
   </div>
 </dialog>
 
+<!-- end-of-conference farewell + PDF downloads. Auto-shows once (LS_FAREWELL);
+     the same two downloads also live permanently in #mineControls. -->
+<dialog id="farewellDlg" class="dlg dlg-talk" aria-labelledby="farewellTitle">
+  <div class="talk-dlg">
+    <header class="talk-dlg-head help-head">
+      <div class="talk-dlg-head-in">
+        <h2 id="farewellTitle">Before you go 🪸</h2>
+        <div class="help-sub">A note from Nicolas Rivas</div>
+      </div>
+      <button id="farewellClose" class="icon-btn" type="button" aria-label="Close">&times;</button>
+    </header>
+    <div class="talk-dlg-body support-body">
+      <p><b>Thank you for using this app, and for the wonderful response!</b> It has been an honor
+        to help you all get to your talks of interest.</p>
+      <p>The app will only stay live for about a week after the conference, so please download a
+        copy to keep:</p>
+      <div class="dl-actions">
+        <button id="dlgPdfFull" class="btn btn-primary" type="button">Full programme (PDF)</button>
+        <p class="dl-hint">The entire conference schedule — titles, rooms and authors.</p>
+        <button id="dlgPdfMine" class="btn btn-primary" type="button">My schedule (PDF)</button>
+        <p class="dl-hint">Just your picks — with abstracts and any notes you took in the app.</p>
+      </div>
+      <p class="dl-note">Each opens your device's print dialog, then choose <b>“Save as PDF.”</b>
+        On iPhone: tap the button, then in the print preview tap the <b>Share icon</b> (top of the
+        screen) and choose <b>Save to Files</b>.</p>
+      <p>Kia ora, and safe travels home. 🐠</p>
+    </div>
+    <footer class="talk-dlg-foot">
+      <button id="farewellDone" class="btn btn-primary" type="button">Close</button>
+    </footer>
+  </div>
+</dialog>
+
 <!-- talk detail: abstract, room, session -->
 <dialog id="talkDlg" class="dlg dlg-talk" aria-labelledby="talkTitle">
   <div class="talk-dlg">
@@ -279,6 +315,10 @@
 </button>
 
 <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+<!-- Populated on demand by the PDF builders; hidden on screen, the only thing
+     shown when printing (see @media print in styles.css). -->
+<section id="printRoot" aria-hidden="true"></section>
 
 <script src="assets/app.js"></script>
 

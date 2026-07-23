@@ -511,3 +511,47 @@ mark{background:color-mix(in srgb,var(--sun) 45%,transparent);color:inherit;bord
 .foot-note{opacity:.85}
 .loading{text-align:center;padding:50px;color:var(--ink-3)}
 @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+
+/* farewell dialog download block */
+.dl-actions{display:flex;flex-direction:column;gap:2px;margin:14px 0 6px}
+.dl-actions .btn{width:100%}
+.dl-hint{margin:2px 0 12px;font-size:12.5px;color:var(--ink-3)}
+.dl-note{font-size:12.5px;color:var(--ink-3);margin:0 0 12px}
+
+/* ---------- print: PDF export via the browser's Save-as-PDF ----------
+   #printRoot is built on demand by the PDF builders and is the ONLY thing
+   shown when printing; the whole app is hidden. Kept off-screen otherwise. */
+#printRoot{display:none}
+@media print{
+  @page{margin:14mm}
+  body>*{display:none!important}
+  #printRoot{display:block!important}
+  #printRoot{color:#000;background:#fff;font:12px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+  #printRoot a{color:#000;text-decoration:none}
+  .pr-doc-head{margin:0 0 14px;border-bottom:2px solid #000;padding-bottom:8px}
+  .pr-doc-head h1{margin:0 0 3px;font-size:19px}
+  .pr-sub{margin:0;font-size:11px;color:#444}
+  .pr-day{break-before:page;margin:0 0 10px}
+  .pr-day:first-of-type{break-before:auto}
+  .pr-day>h2{font-size:15px;margin:0 0 8px;padding-bottom:3px;border-bottom:1px solid #999}
+  /* full programme: session blocks (a long session may span pages; only the
+     header-to-first-row bond and individual rows are kept unbroken) */
+  .pr-sess{margin:0 0 11px}
+  .pr-sess-head{font-size:13px;font-weight:700;margin:8px 0 0;break-after:avoid}
+  .pr-sess-sub{font-size:10.5px;color:#555;margin:0 0 4px;break-after:avoid}
+  .pr-trow{break-inside:avoid;margin:0 0 3px;padding:0 0 3px;border-bottom:1px dotted #ddd;font-size:11.5px}
+  .pr-trow .pr-when{margin-right:4px}
+  .pr-ttitle{font-weight:600}
+  .pr-twho{color:#333}
+  /* my schedule: one card per pick */
+  .pr-entry{break-inside:avoid;margin:0 0 9px;padding:0 0 7px;border-bottom:1px solid #ddd}
+  .pr-line{font-size:11px;color:#333;margin:0 0 1px}
+  .pr-when{font-weight:700;color:#000}
+  .pr-title{font-weight:700;font-size:12.5px;margin:1px 0}
+  .pr-who{font-size:11.5px;color:#222}
+  .pr-event{color:#333;font-style:italic}
+  .pr-clash{color:#000;font-weight:700;font-size:11px}
+  .pr-abstract{font-size:11px;color:#222;margin:5px 0 0}
+  .pr-note{font-size:11px;margin:5px 0 0;padding:5px 8px;border-left:3px solid #000;background:#f2f2f2}
+  .pr-note-tags{font-weight:700}
+}
